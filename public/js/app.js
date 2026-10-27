@@ -1,7 +1,8 @@
 // Sderot SA"R GIS — main app: login, map, layers, drawing, data entry, search, export.
 import { GROUPS, LAYERS, LAYER_BY_ID, classify, baseGeomType, normalizeText } from './layers.js';
 import * as sync from './sync.js';
-import { fetchSderotFromOSM, SDEROT_BBOX } from './osm.js';
+import { SDEROT_BBOX } from './osm.js';
+import { initCityMap, loadCityData, setCityMap, resetCityMap, cityInfo, legendHtml } from './citymap.js';
 
 export const APP_VERSION = '0.1.0';
 const SDEROT_CENTER = [31.5245, 34.5965];
@@ -18,7 +19,7 @@ let map;
 let groups = {}; // layerId → L.FeatureGroup
 let allFeatures = [];
 let baseFeatures = [];
-let visible = new Set(prefs.get('visible', LAYERS.map((l) => l.id)));
+let visible = new Set(prefs.get('visible', LAYERS.map((l) => l.id).filter((id) => id !== 'streets')));
 let lastPosition = null;
 
 // ───────────────────────── toasts ─────────────────────────
@@ -67,32 +68,40 @@ function applyDisplay() {
 $$('[data-theme-set]').forEach((b) => b.addEventListener('click', () => { prefs.set('theme', b.dataset.themeSet); applyDisplay(); }));
 $$('[data-size-set]').forEach((b) => b.addEventListener('click', () => { prefs.set('size', b.dataset.sizeSet); applyDisplay(); }));
 
-// ───────────────────────── login ─────────────────────────
+// ───────────────────────── session: everyone views, editors log in ─────────────────────────
+const isEditor = () => !!user;
+
 async function start() {
   applyDisplay();
   $('#app-version').textContent = APP_VERSION;
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
   user = await sync.restoreSession();
-  if (user) enterApp();
-  else showLogin();
+  enterApp();
 }
 
 function showLogin() {
-  $('#app').hidden = true;
+  closeSheet();
   $('#login').hidden = false;
+  $('#login-error').textContent = '';
   $('#login-offline').hidden = navigator.onLine;
   setTimeout(() => $('#login-user').focus(), 50);
 }
+$('#login-close').addEventListener('click', () => { $('#login').hidden = true; });
+$('#btn-login').addEventListener('click', showLogin);
+$('#btn-login-top').addEventListener('click', showLogin);
 
 $('#login-form').addEventListener('submit', async (e) => {
   e.preventDefault();
-  const btn = e.submitter || $('#login-form button');
+  const btn = $('#login-form button[type=submit]');
   btn.disabled = true;
   $('#login-error').textContent = '';
   try {
     user = await sync.login($('#login-user').value.trim(), $('#login-pass').value);
     $('#login-pass').value = '';
-    enterApp();
+    $('#login').hidden = true;
+    applyRole();
+    toast(`שלום ${user.label} – ניתן להזין ולעדכן נתונים`, 'ok');
+    sync.sync();
   } catch (err) {
     $('#login-error').textContent = navigator.onLine ? err.message : 'אין חיבור לרשת';
   } finally {
@@ -100,14 +109,26 @@ $('#login-form').addEventListener('submit', async (e) => {
   }
 });
 
+/** Show editing tools only to the unit's editors; everyone else gets a read-only map. */
+function applyRole() {
+  document.body.classList.toggle('viewer', !isEditor());
+  $('#actions').hidden = !isEditor() || !!drawing;
+  $('#btn-login').hidden = isEditor();
+  $('#btn-login-top').hidden = isEditor();
+  $('#btn-logout').hidden = !isEditor();
+  $('#gis-tools').hidden = user?.role !== 'gis';
+  $('#user-label').textContent = isEditor() ? `${user.label} · ${user.username}` : 'מצב צפייה';
+  $('#menu-user').innerHTML = isEditor()
+    ? `<strong>${esc(user.label)}</strong><br><span class="muted">${esc(user.username)} · הזנה ועדכון נתונים</span>`
+    : '<strong>מצב צפייה</strong><br><span class="muted">הזנה ועדכון נתונים – לבעלי תפקידים בלבד</span>';
+  if (openDetailId) showDetail(openDetailId, true);
+}
+
 let appStarted = false;
 async function enterApp() {
-  $('#login').hidden = true;
   $('#app').hidden = false;
-  $('#user-label').textContent = `${user.label} · ${user.username}`;
-  $('#gis-tools').hidden = user.role !== 'gis';
-  $('#menu-user').innerHTML = `<strong>${esc(user.label)}</strong><br><span class="muted">${esc(user.username)}</span>`;
-  if (appStarted) { map.invalidateSize(); sync.sync(); return; }
+  applyRole();
+  if (appStarted) return;
   appStarted = true;
   initMap();
   buildLayerList();
@@ -115,20 +136,28 @@ async function enterApp() {
   sync.on('change', (list) => { allFeatures = list; renderFeatures(); refreshLayerCounts(); });
   sync.on('status', renderStatus);
   sync.on('notice', (msg) => toast(msg, 'error'));
-  sync.on('auth', () => { toast('פג תוקף ההתחברות – יש להתחבר מחדש', 'error'); });
+  sync.on('auth', async () => {
+    if (!user) return;
+    user = null;
+    await sync.logout();
+    applyRole();
+    toast('פג תוקף ההתחברות – יש להתחבר מחדש כדי לשלוח את הנתונים', 'error');
+  });
   await sync.init();
   baseFeatures = (await sync.loadBase()).features || [];
   renderFeatures();
   refreshLayerCounts();
+  initCity();
 }
 
 $('#btn-logout').addEventListener('click', async () => {
   const pending = (await import('./db.js')).outbox;
-  if ((await pending.count()) > 0 && !confirm('יש נתונים שעדיין לא נשלחו לשרת. לצאת בכל זאת? הנתונים יישמרו במכשיר.')) return;
+  if ((await pending.count()) > 0 && !confirm('יש נתונים שעדיין לא נשלחו לשרת. לצאת בכל זאת? הנתונים יישמרו במכשיר וישלחו בכניסה הבאה.')) return;
   await sync.logout();
   closeSheet();
   user = null;
-  showLogin();
+  applyRole();
+  toast('יצאת ממצב עריכה');
 });
 
 // ───────────────────────── status chip ─────────────────────────
@@ -140,11 +169,11 @@ function renderStatus(s) {
   else if (s.error) { chip.classList.add('error'); chip.textContent = '⚠ שגיאה'; chip.title = s.error; }
   else if (s.syncing) chip.textContent = 'מסנכרן…';
   else if (pending) { chip.classList.add('offline'); chip.textContent = `${pending} ממתינים`; }
-  else { chip.classList.add('ok'); chip.textContent = '✓ מסונכרן'; }
+  else { chip.classList.add('ok'); chip.textContent = '✓ מעודכן'; }
   chip.dataset.detail = [
-    s.online ? 'מחובר לרשת' : 'אין חיבור לרשת – הנתונים נשמרים במכשיר',
-    pending ? `${s.pending} שינויים ו-${s.pendingPhotos} תמונות ממתינים לשליחה` : 'אין נתונים ממתינים',
-    s.lastSync ? `סנכרון אחרון: ${new Date(s.lastSync).toLocaleTimeString('he-IL')}` : '',
+    s.online ? 'מחובר לרשת' : 'אין חיבור לרשת – מוצגים הנתונים השמורים במכשיר',
+    pending ? `${s.pending} שינויים ו-${s.pendingPhotos} תמונות ממתינים לשליחה` : '',
+    s.lastSync ? `עדכון אחרון: ${new Date(s.lastSync).toLocaleTimeString('he-IL')}` : '',
     s.error || '',
   ].filter(Boolean).join('\n');
 }
@@ -152,37 +181,73 @@ $('#status').addEventListener('click', (e) => { toast(e.currentTarget.dataset.de
 $('#btn-sync-now').addEventListener('click', () => { sync.sync(); toast('מסנכרן…'); });
 
 // ───────────────────────── map ─────────────────────────
+// "city" is drawn in the browser from OpenStreetMap data, in the style of the municipal paper map.
 const BASEMAPS = {
+  city: { name: 'מפת העיר' },
   streets: { name: 'רחובות', url: 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', attr: '© OpenStreetMap contributors © CARTO', sub: 'abcd', max: 20 },
-  satellite: { name: 'תצלום', url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', attr: 'Esri, Maxar, Earthstar Geographics', max: 19 },
+  satellite: { name: 'תצלום אוויר', url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', attr: 'Esri, Maxar, Earthstar Geographics', max: 19 },
   osm: { name: 'OSM', url: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png', attr: '© OpenStreetMap contributors', max: 19 },
   dark: { name: 'כהה', url: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', attr: '© OpenStreetMap contributors © CARTO', sub: 'abcd', max: 20 },
 };
 let baseLayer;
+let currentBase = null;
 function setBasemap(id, remember = true) {
-  const b = BASEMAPS[id] || BASEMAPS.streets;
-  if (baseLayer) map.removeLayer(baseLayer);
-  baseLayer = L.tileLayer(b.url, { attribution: b.attr, subdomains: b.sub || 'abc', maxZoom: 21, maxNativeZoom: b.max, crossOrigin: true }).addTo(map);
+  if (!BASEMAPS[id]) id = 'city';
+  if (baseLayer) { map.removeLayer(baseLayer); baseLayer = null; }
+  if (id === 'city') {
+    if (!setCityMap(true)) {
+      // No city data yet (first run, before the import): show the street tiles meanwhile.
+      setCityMap(false);
+      currentBase = 'city';
+      baseLayer = L.tileLayer(BASEMAPS.streets.url, { attribution: BASEMAPS.streets.attr, subdomains: 'abcd', maxZoom: 21, maxNativeZoom: 20, crossOrigin: true }).addTo(map);
+    } else {
+      map.attributionControl.addAttribution(CITY_ATTR);
+    }
+  } else {
+    setCityMap(false);
+    map.attributionControl.removeAttribution(CITY_ATTR);
+    const b = BASEMAPS[id];
+    baseLayer = L.tileLayer(b.url, { attribution: b.attr, subdomains: b.sub || 'abc', maxZoom: 21, maxNativeZoom: b.max, crossOrigin: true }).addTo(map);
+  }
+  currentBase = id;
   if (remember) prefs.set('basemap', id);
   $$('#basemaps .btn').forEach((btn) => btn.setAttribute('aria-pressed', btn.dataset.base === id));
+  $('#legend-wrap').hidden = id !== 'city';
+}
+const CITY_ATTR = 'מפת העיר: © OpenStreetMap contributors';
+
+async function initCity() {
+  const ok = await loadCityData();
+  if (ok) {
+    resetCityMap();
+    if (currentBase === 'city') setBasemap('city', false);
+    const info = cityInfo();
+    $('#city-info').textContent = info ? `מפת העיר עודכנה ${fmt(info.importedAt)} · ${info.stats.buildings} מבנים, ${info.stats.roads} קטעי דרך` : '';
+  } else {
+    $('#city-info').textContent = 'מפת העיר טרם נטענה מ-OpenStreetMap.';
+    if (isEditor()) toast('מפת העיר טרם נטענה – אפשר לטעון אותה מהתפריט („טעינת מפת העיר”)', 'error');
+  }
 }
 
 function initMap() {
-  map = L.map('map', { zoomControl: false, attributionControl: true, tap: true }).setView(prefs.get('view', { c: SDEROT_CENTER, z: 15 }).c, prefs.get('view', { z: 15 }).z);
+  map = L.map('map', { zoomControl: false, attributionControl: true, tap: true, maxZoom: 20 }).setView(prefs.get('view', { c: SDEROT_CENTER, z: 15 }).c, prefs.get('view', { z: 15 }).z);
   L.control.zoom({ position: 'topleft' }).addTo(map);
   L.control.scale({ imperial: false, position: 'bottomright' }).addTo(map);
+  initCityMap(map);
   $('#basemaps').innerHTML = Object.entries(BASEMAPS).map(([id, b]) => `<button class="btn" type="button" data-base="${id}" role="radio">${b.name}</button>`).join('');
   $$('#basemaps .btn').forEach((btn) => btn.addEventListener('click', () => setBasemap(btn.dataset.base)));
-  setBasemap(prefs.get('basemap', document.body.dataset.theme === 'day' ? 'streets' : 'dark'));
+  $('#legend').innerHTML = legendHtml();
+  setBasemap(prefs.get('basemap', 'city'));
   map.on('moveend', () => prefs.set('view', { c: [map.getCenter().lat, map.getCenter().lng], z: map.getZoom() }));
-  map.on('zoomend', updateStreetLabels);
   map.on('dragstart', () => { followGps = false; $('#btn-locate').classList.remove('active'); });
 
-  // Order matters: areas under lines under points.
+  // Order matters: GovMap overlays, then the unit's areas, lines and points on top.
+  map.createPane('govmap').style.zIndex = 300;
   map.createPane('areas').style.zIndex = 410;
   map.createPane('lines').style.zIndex = 420;
   for (const l of LAYERS) groups[l.id] = L.featureGroup();
   applyVisibility();
+  restoreGovmap();
 
   map.pm.setLang('he', {
     tooltips: {
@@ -197,9 +262,62 @@ function initMap() {
   map.on('pm:create', onDrawCreated);
 
   map.on('locationfound', onLocation);
-  map.on('locationerror', () => toast('לא ניתן לקבל מיקום GPS', 'error'));
+  map.on('locationerror', () => {});
   map.locate({ watch: true, enableHighAccuracy: true, setView: false });
 }
+
+// ───────────────────────── GovMap layers (WMS, open data) ─────────────────────────
+let govmapInfo = null; // { wms, layers: [{name, title}] }
+const govmapLayers = new Map(); // name → L.TileLayer.WMS
+function addGovmap(name) {
+  if (govmapLayers.has(name) || !govmapInfo) return;
+  const lyr = L.tileLayer.wms(govmapInfo.wms, { layers: name, format: 'image/png', transparent: true, version: '1.1.1', pane: 'govmap', opacity: 0.85, maxZoom: 21, attribution: '© GovMap – המרכז למיפוי ישראל' });
+  lyr.on('tileerror', () => { if (!lyr._warned) { lyr._warned = true; toast(`שכבת GovMap „${name}” לא נטענה`, 'error'); } });
+  govmapLayers.set(name, lyr.addTo(map));
+}
+function removeGovmap(name) {
+  const lyr = govmapLayers.get(name);
+  if (lyr) map.removeLayer(lyr);
+  govmapLayers.delete(name);
+}
+async function loadGovmapList() {
+  if (govmapInfo?.layers?.length) return govmapInfo;
+  try {
+    const res = await fetch('/api/govmap');
+    govmapInfo = await res.json();
+    if (!res.ok) throw new Error(govmapInfo.error);
+  } catch (e) {
+    $('#govmap-status').textContent = e.message || 'רשימת השכבות של GovMap אינה זמינה כרגע';
+  }
+  return govmapInfo;
+}
+async function restoreGovmap() {
+  const chosen = prefs.get('govmap', []);
+  if (!chosen.length) return;
+  await loadGovmapList();
+  chosen.forEach(addGovmap);
+}
+function renderGovmapList() {
+  const q = normalizeText($('#govmap-filter').value).trim();
+  const chosen = new Set(prefs.get('govmap', []));
+  const list = (govmapInfo?.layers || []).filter((l) => !q || normalizeText(`${l.title} ${l.name}`).includes(q));
+  list.sort((a, b) => Number(chosen.has(b.name)) - Number(chosen.has(a.name)));
+  $('#govmap-list').innerHTML = list.slice(0, 80).map((l) => `<label class="layer-row"><input type="checkbox" data-gm="${esc(l.name)}" ${chosen.has(l.name) ? 'checked' : ''}><span class="name">${esc(l.title || l.name)}<small class="muted" dir="ltr"> ${esc(l.name)}</small></span></label>`).join('')
+    || '<p class="muted">לא נמצאו שכבות</p>';
+  $$('[data-gm]').forEach((cb) => cb.addEventListener('change', () => {
+    const set = new Set(prefs.get('govmap', []));
+    if (cb.checked) { set.add(cb.dataset.gm); addGovmap(cb.dataset.gm); } else { set.delete(cb.dataset.gm); removeGovmap(cb.dataset.gm); }
+    prefs.set('govmap', [...set]);
+  }));
+  $('#govmap-status').textContent = govmapInfo?.layers?.length ? `${govmapInfo.layers.length} שכבות פתוחות זמינות ב-GovMap` : $('#govmap-status').textContent;
+}
+$('#govmap-open').addEventListener('toggle', async (e) => {
+  if (!e.target.open) return;
+  $('#govmap-status').textContent = 'טוען את רשימת השכבות…';
+  await loadGovmapList();
+  renderGovmapList();
+});
+$('#govmap-filter').addEventListener('input', renderGovmapList);
 
 // ───────────────────────── GPS ─────────────────────────
 let gpsMarker, gpsCircle;
@@ -254,19 +372,15 @@ function toLeaflet(geometry, layer, { pending = false, base = false, onClick }) 
   return lyr;
 }
 
-let streetLabelLayers = [];
 function renderFeatures() {
   if (!map) return;
   Object.values(groups).forEach((g) => g.clearLayers());
-  streetLabelLayers = [];
   for (const f of baseFeatures) {
     const layer = LAYER_BY_ID[f.properties.layer];
     if (!layer || !f.geometry) continue;
+    if (layer.id === 'neighborhoods' && f.geometry.type === 'Point') continue; // the city map already writes neighborhood names
     const lyr = toLeaflet(f.geometry, layer, { base: true, onClick: () => showBaseDetail(f) });
-    if (f.properties.layer === 'streets' && f.properties.name) {
-      lyr.bindTooltip(f.properties.name, { permanent: true, direction: 'center', className: 'street-label', opacity: 0.9 });
-      streetLabelLayers.push(lyr);
-    }
+    if (f.properties.layer === 'streets' && f.properties.name) lyr.bindTooltip(f.properties.name, { sticky: true, className: 'street-label' });
     groups[layer.id].addLayer(lyr);
   }
   for (const f of allFeatures) {
@@ -274,14 +388,7 @@ function renderFeatures() {
     if (!f.geometry) continue;
     groups[layer.id].addLayer(toLeaflet(f.geometry, layer, { pending: f.pending, onClick: () => showDetail(f.id) }));
   }
-  updateStreetLabels();
   if (openDetailId) showDetail(openDetailId, true);
-}
-
-function updateStreetLabels() {
-  // Street names only when zoomed in, so they don't bury the map.
-  const show = map.getZoom() >= 17;
-  for (const l of streetLabelLayers) { if (show) l.openTooltip?.(); else l.closeTooltip?.(); }
 }
 
 function applyVisibility() {
@@ -524,7 +631,7 @@ function centroid(geometry) {
   const lat = pts.reduce((a, p) => a + p[1], 0) / pts.length;
   return [lat, lon];
 }
-function canDelete(f) { return ['gis', 'commander', 'deputy'].includes(user.role) || f.createdBy?.username === user.username; }
+function canDelete(f) { return !!user && (['gis', 'commander', 'deputy'].includes(user.role) || f.createdBy?.username === user.username); }
 
 async function showDetail(id, refresh = false) {
   const f = sync.getFeature(id);
@@ -546,8 +653,8 @@ async function showDetail(id, refresh = false) {
     </table>
     ${f.history?.length ? `<details class="history"><summary>היסטוריית עדכונים (${f.history.length})</summary><ul>${[...f.history].reverse().map((h) => `<li>${esc(h.action)} · ${esc(h.by?.label)} (${esc(h.by?.username)}) · ${fmt(h.at)}</li>`).join('')}</ul></details>` : ''}
     <div class="detail-actions">
-      <button class="btn" id="d-edit" type="button">✏️ עריכת פרטים</button>
-      <button class="btn" id="d-shape" type="button">📐 עריכת צורה</button>
+      ${isEditor() ? `<button class="btn" id="d-edit" type="button">✏️ עריכת פרטים</button>
+      <button class="btn" id="d-shape" type="button">📐 עריכת צורה</button>` : ''}
       <a class="btn" href="https://waze.com/ul?ll=${lat},${lon}&navigate=yes" target="_blank" rel="noopener">🚗 ניווט</a>
       <button class="btn" id="d-zoom" type="button">🔎 התמקד</button>
       ${canDelete(f) ? '<button class="btn btn-danger" id="d-delete" type="button">🗑 מחיקה</button>' : ''}
@@ -563,8 +670,10 @@ async function showDetail(id, refresh = false) {
     div.append(img);
     box.append(div);
   }
-  $('#d-edit').onclick = () => openForm({ feature: f });
-  $('#d-shape').onclick = () => startShapeEdit(f);
+  if (isEditor()) {
+    $('#d-edit').onclick = () => openForm({ feature: f });
+    $('#d-shape').onclick = () => startShapeEdit(f);
+  }
   $('#d-zoom').onclick = () => { zoomTo(f.geometry); closeSheet(); };
   const del = $('#d-delete');
   if (del) del.onclick = async () => {
@@ -589,9 +698,9 @@ function showBaseDetail(f) {
     <table class="meta-table">${extra}<tr><th>מיקום</th><td dir="ltr" style="text-align:right">${lat.toFixed(6)}, ${lon.toFixed(6)}</td></tr></table>
     <div class="detail-actions">
       <a class="btn" href="https://waze.com/ul?ll=${lat},${lon}&navigate=yes" target="_blank" rel="noopener">🚗 ניווט</a>
-      <button class="btn" id="d-copy" type="button">📋 העתקה כנתון לעריכה</button>
+      ${isEditor() ? '<button class="btn" id="d-copy" type="button">📋 העתקה כנתון לעריכה</button>' : ''}
     </div>`;
-  $('#d-copy').onclick = () => {
+  if (isEditor()) $('#d-copy').onclick = () => {
     const g = f.geometry.type.startsWith('Multi') ? null : f.geometry;
     if (!g) { toast('לא ניתן להעתיק גאומטריה מרובת חלקים', 'error'); return; }
     openForm({ geometry: g });
@@ -706,7 +815,8 @@ function tilesFor([s, w, n, e], z) {
 }
 $('#btn-offline-tiles').addEventListener('click', async () => {
   if (!navigator.onLine) { toast('נדרש חיבור לרשת להורדה', 'error'); return; }
-  const id = prefs.get('basemap', 'streets');
+  // The city map itself is already stored on the device; save the street tiles as well, for zooming beyond it.
+  const id = BASEMAPS[prefs.get('basemap', 'city')]?.url ? prefs.get('basemap') : 'streets';
   const b = BASEMAPS[id];
   const tiles = [13, 14, 15, 16, 17].flatMap((z) => tilesFor(SDEROT_BBOX, z));
   const urls = tiles.map((t) => b.url.replace('{s}', 'abcd'[(t.x + t.y) % 4]).replace('{z}', t.z).replace('{x}', t.x).replace('{y}', t.y).replace('{r}', ''));
@@ -728,19 +838,26 @@ $('#btn-offline-tiles').addEventListener('click', async () => {
 
 // GIS officer: import base layers.
 $('#btn-osm-import').addEventListener('click', async () => {
-  if (!confirm('לייבא מחדש את שכבות הבסיס (רחובות, שכונות, ברזי כיבוי, דפיברילטורים, מקלטים, מוסדות) מ-OpenStreetMap? הייבוא יחליף את שכבות הבסיס הקיימות.')) return;
+  if (!confirm('לטעון מ-OpenStreetMap את מפת העיר (מבנים, רחובות, שימושי קרקע, מוסדות) ואת שכבות הבסיס (ברזי כיבוי, דפיברילטורים, מקלטים, שכונות)? הטעינה מחליפה את הגרסה הקודמת ונמשכת עד דקה.')) return;
   const status = $('#osm-status');
+  const btn = $('#btn-osm-import');
+  btn.disabled = true;
+  status.textContent = 'השרת מוריד את הנתונים מ-OpenStreetMap… (עד דקה)';
   try {
-    const fc = await fetchSderotFromOSM((m) => { status.textContent = m; });
-    status.textContent = `התקבלו ${fc.features.length} פריטים. שומר בשרת…`;
-    const r = await sync.saveBase(fc);
+    const res = await fetch('/api/city', { method: 'POST', credentials: 'same-origin' });
+    const r = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(r.error || `שגיאה ${res.status}`);
+    status.textContent = `נטענו ${r.stats.buildings} מבנים, ${r.stats.roads} קטעי דרך, ${r.stats.landuse} שטחים, ${r.stats.pois} מוסדות ו-${r.base} פריטי בסיס.`;
     baseFeatures = (await sync.loadBase()).features || [];
     renderFeatures(); refreshLayerCounts();
-    status.textContent = `נשמרו ${r.count} פריטי בסיס.`;
-    toast('שכבות הבסיס עודכנו', 'ok');
+    await initCity();
+    setBasemap('city');
+    toast('מפת העיר נטענה', 'ok');
   } catch (e) {
     status.textContent = e.message;
     toast(e.message, 'error');
+  } finally {
+    btn.disabled = false;
   }
 });
 $('#base-file').addEventListener('change', async (e) => {
@@ -767,20 +884,5 @@ $('#base-file').addEventListener('change', async (e) => {
     toast(`ייבוא נכשל: ${err.message}`, 'error');
   }
 });
-
-// Scanned city map (reference only; not georeferenced).
-let scanMap;
-$('#btn-scan').addEventListener('click', () => {
-  closeSheet();
-  $('#scan-viewer').hidden = false;
-  if (!scanMap) {
-    const W = 2244; const H = 3000;
-    scanMap = L.map('scan-map', { crs: L.CRS.Simple, minZoom: -3, maxZoom: 2, zoomSnap: 0.25, attributionControl: false });
-    const bounds = [[0, 0], [H, W]];
-    L.imageOverlay('/img/sderot-map.jpg', bounds).addTo(scanMap);
-    scanMap.fitBounds(bounds);
-  } else scanMap.invalidateSize();
-});
-$('#scan-close').addEventListener('click', () => { $('#scan-viewer').hidden = true; });
 
 start();

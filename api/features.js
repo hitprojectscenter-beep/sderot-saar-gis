@@ -1,5 +1,5 @@
-// GET  /api/features            → { features: [...], updatedAt }  (ETag / If-None-Match → 304)
-// POST /api/features {ops:[…]}  → apply upserts and deletes in one atomic write
+// GET  /api/features            → { features: [...], updatedAt }  (public; ETag / If-None-Match → 304)
+// POST /api/features {ops:[…]}  → apply upserts and deletes in one atomic write (editors only)
 //   op: { op: 'upsert', feature: {id, geometry, name, description, photos, layer} }
 //   op: { op: 'delete', id }
 import { requireUser, canDelete } from './_lib/auth.js';
@@ -10,11 +10,14 @@ const MAX_OPS = 200;
 const HISTORY_LIMIT = 30;
 
 export default async function handler(req, res) {
-  const user = requireUser(req, res);
-  if (!user) return;
   try {
+    // Viewing is open to everyone; only the unit's editors may change data.
     if (req.method === 'GET') return await list(req, res);
-    if (req.method === 'POST') return await apply(req, res, user);
+    if (req.method === 'POST') {
+      const user = requireUser(req, res);
+      if (!user) return;
+      return await apply(req, res, user);
+    }
     res.setHeader('Allow', 'GET, POST');
     return res.status(405).json({ error: 'method not allowed' });
   } catch (e) {

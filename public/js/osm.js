@@ -1,32 +1,10 @@
-// One-click import of base layers for Sderot from OpenStreetMap (Overpass API).
-// Runs in the GIS officer's browser; the result is saved on the server once,
-// and every other device downloads it from there (and keeps it for offline use).
+// Conversion of OpenStreetMap (Overpass) data into the app's thematic base layers:
+// streets, neighborhoods, hydrants, defibrillators, shelters, institutions…
+// Used by the server import (api/_lib/citymap.js); kept DOM-free so both sides can load it.
 
-export const SDEROT_BBOX = [31.503, 34.568, 31.552, 34.628]; // south, west, north, east
-
-const ENDPOINTS = [
-  'https://overpass-api.de/api/interpreter',
-  'https://overpass.kumi.systems/api/interpreter',
-  'https://maps.mail.ru/osm/tools/overpass/api/interpreter',
-];
+export const SDEROT_BBOX = [31.494, 34.563, 31.556, 34.642]; // south, west, north, east
 
 const NON_PROTECTIVE_SHELTERS = new Set(['public_transport', 'picnic_shelter', 'weather_shelter', 'field_shelter', 'lean_to', 'sun_shelter', 'gazebo', 'rock_shelter']);
-
-function query([s, w, n, e]) {
-  const b = `${s},${w},${n},${e}`;
-  return `[out:json][timeout:120];
-(
-  way["highway"]["name"](${b});
-  nwr["place"~"^(neighbourhood|suburb|quarter)$"](${b});
-  nwr["emergency"~"^(fire_hydrant|defibrillator|fire_extinguisher|fire_water_pond|suction_point|assembly_point)$"](${b});
-  nwr["amenity"~"^(shelter|police|fire_station|hospital|clinic|doctors|pharmacy|school|kindergarten|childcare|social_facility|nursing_home|townhall|community_centre|fuel)$"](${b});
-  nwr["building"="bunker"](${b});
-  nwr["military"="bunker"](${b});
-  nwr["man_made"~"^(water_tower|reservoir_covered)$"](${b});
-  nwr["power"~"^(substation|transformer)$"](${b});
-);
-out geom;`;
-}
 
 /** Which app layer an OSM element belongs to, or null to skip it. */
 export function layerForTags(t) {
@@ -128,25 +106,4 @@ function mergeStreets(features) {
     streets.get(key).geometry.coordinates.push(f.geometry.coordinates);
   }
   return { type: 'FeatureCollection', features: [...streets.values(), ...rest] };
-}
-
-export async function fetchSderotFromOSM(onProgress = () => {}) {
-  const body = `data=${encodeURIComponent(query(SDEROT_BBOX))}`;
-  let lastError;
-  for (const url of ENDPOINTS) {
-    onProgress(`מוריד מ-${new URL(url).host}…`);
-    try {
-      const ctrl = new AbortController();
-      const timer = setTimeout(() => ctrl.abort(), 90000);
-      const res = await fetch(url, { method: 'POST', body, headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, signal: ctrl.signal });
-      clearTimeout(timer);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const geojson = overpassToGeoJSON(await res.json());
-      geojson.source = `OpenStreetMap via ${new URL(url).host}`;
-      return geojson;
-    } catch (e) {
-      lastError = e;
-    }
-  }
-  throw new Error(`הורדה מ-OpenStreetMap נכשלה (${lastError?.message || 'שגיאה'})`);
 }

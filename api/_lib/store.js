@@ -31,6 +31,7 @@ export async function readObject(pathname, { ifNoneMatch } = {}) {
     const body = Buffer.from(await new Response(res.stream).arrayBuffer());
     return { status: 200, body, etag: res.blob.etag, contentType: res.blob.contentType };
   }
+  if (process.env.VERCEL) return null; // deployed without a Blob store: nothing stored yet
   const file = path.join(DATA_DIR, pathname);
   try {
     const body = await readFile(file);
@@ -65,6 +66,7 @@ export async function writeObject(pathname, body, { contentType = 'application/j
       throw e;
     }
   }
+  if (process.env.VERCEL) throw new Error('לא חובר אחסון (Vercel Blob) לפרויקט – יש לחבר Blob Store בהגדרות Vercel');
   // Local files: serialize writes so the etag check and the write are atomic within this process.
   const run = fsQueue.then(async () => {
     const file = path.join(DATA_DIR, pathname);

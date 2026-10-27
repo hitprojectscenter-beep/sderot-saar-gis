@@ -13,16 +13,17 @@
   <meta name="mobile-web-app-capable" content="yes">
   <link rel="stylesheet" href="/vendor/leaflet/leaflet.css">
   <link rel="stylesheet" href="/vendor/geoman/leaflet-geoman.css">
-  <link rel="stylesheet" href="/css/app.css?v=1">
+  <link rel="stylesheet" href="/css/app.css?v=2">
 </head>
-<body data-theme="day" data-size="normal">
+<body data-theme="day" data-size="normal" class="viewer">
 
   <!-- ───────── Login ───────── -->
   <section id="login" class="screen" hidden>
     <form id="login-form" class="login-card" autocomplete="on">
+      <button id="login-close" class="icon-btn login-close" type="button" aria-label="סגירה">✕</button>
       <img src="/img/icon-192.png" alt="סמל יחידת סע״ר שדרות" class="login-logo" width="120" height="120">
-      <h1>מפת סע״ר שדרות</h1>
-      <p class="muted">מערכת GIS לקליטה והנגשה של נתונים בשגרה ובחירום</p>
+      <h1>כניסת בעלי תפקידים</h1>
+      <p class="muted">הזנה ועדכון של נתונים – לאחראי GIS, למפקד, לסגן ולמפקדי הצוותים. הצפייה במפה פתוחה לכולם.</p>
       <label>שם משתמש
         <input id="login-user" name="username" autocomplete="username" autocapitalize="off" autocorrect="off" spellcheck="false" required dir="ltr">
       </label>
@@ -31,6 +32,7 @@
       </label>
       <button class="btn btn-primary btn-xl" type="submit">כניסה</button>
       <p id="login-error" class="error" role="alert"></p>
+      <button class="btn btn-wide-center" type="button" onclick="document.getElementById('login').hidden=true">המשך בצפייה בלבד</button>
       <p id="login-offline" class="muted small" hidden>אין חיבור לרשת. כניסה ראשונה דורשת רשת; לאחר מכן המערכת עובדת גם בלעדיה.</p>
     </form>
   </section>
@@ -44,6 +46,7 @@
         <span id="user-label" class="muted small"></span>
       </div>
       <button id="status" class="status-chip" type="button" title="מצב סנכרון">…</button>
+      <button id="btn-login-top" class="login-chip" type="button">🔑 כניסה</button>
       <button id="btn-search" class="icon-btn" type="button" aria-label="חיפוש">🔍</button>
       <button id="btn-menu" class="icon-btn" type="button" aria-label="תפריט">☰</button>
     </header>
@@ -55,7 +58,7 @@
       <button id="btn-locate" class="fab" type="button" aria-label="המיקום שלי">◎<span>מיקומי</span></button>
     </div>
 
-    <nav id="actions" class="actionbar" aria-label="הוספת נתון">
+    <nav id="actions" class="actionbar" aria-label="הוספת נתון" hidden>
       <button class="act" data-draw="Marker" type="button"><b>📍</b>נקודה</button>
       <button class="act" data-draw="Line" type="button"><b>〰️</b>קו</button>
       <button class="act" data-draw="Polygon" type="button"><b>⬛</b>שטח</button>
@@ -77,6 +80,13 @@
     <header class="sheet-head"><h2>שכבות</h2><button class="icon-btn" data-close type="button" aria-label="סגירה">✕</button></header>
     <div class="sheet-body">
       <div class="basemaps" id="basemaps" role="radiogroup" aria-label="מפת רקע"></div>
+      <details id="legend-wrap" class="legend-box"><summary>מקרא מפת העיר</summary><div id="legend"></div></details>
+      <details id="govmap-open" class="legend-box">
+        <summary>🏛 שכבות GovMap (מידע ממשלתי פתוח)</summary>
+        <input id="govmap-filter" type="search" placeholder="חיפוש שכבה: גושים, מוסדות, תשתיות…" autocomplete="off">
+        <p id="govmap-status" class="muted small"></p>
+        <div id="govmap-list"></div>
+      </details>
       <div class="row gap">
         <button class="btn" id="layers-all" type="button">הצג הכול</button>
         <button class="btn" id="layers-none" type="button">הסתר הכול</button>
@@ -143,19 +153,22 @@
       <p id="offline-progress" class="muted small"></p>
       <button class="btn btn-wide" id="btn-sync-now" type="button">🔄 סנכרון עכשיו</button>
       <h3>מפות ונתונים</h3>
-      <button class="btn btn-wide" id="btn-scan" type="button">🗺 המפה הסרוקה של העיר</button>
+      <p id="city-info" class="muted small"></p>
       <button class="btn btn-wide" id="btn-export-xlsx" type="button">📊 ייצוא לאקסל (CSV)</button>
       <button class="btn btn-wide" id="btn-export-geojson" type="button">🌐 ייצוא GeoJSON</button>
+      <div class="editor-only">
+        <button class="btn btn-wide" id="btn-osm-import" type="button">🛰 טעינת מפת העיר ושכבות הבסיס מ-OpenStreetMap</button>
+        <p id="osm-status" class="muted small"></p>
+      </div>
       <div id="gis-tools" hidden>
         <h3>כלי אחראי GIS</h3>
-        <button class="btn btn-wide" id="btn-osm-import" type="button">🛰 ייבוא שכבות בסיס מ-OpenStreetMap</button>
         <label class="btn btn-wide">📥 ייבוא GeoJSON כשכבת בסיס
           <input id="base-file" type="file" accept=".geojson,.json,application/geo+json,application/json" hidden>
         </label>
-        <p id="osm-status" class="muted small"></p>
       </div>
       <h3>חשבון</h3>
-      <button class="btn btn-wide btn-danger" id="btn-logout" type="button">יציאה מהמערכת</button>
+      <button class="btn btn-wide btn-primary" id="btn-login" type="button">🔑 כניסת בעלי תפקידים (הזנת נתונים)</button>
+      <button class="btn btn-wide btn-danger" id="btn-logout" type="button" hidden>יציאה ממצב עריכה</button>
       <p class="muted small">גרסה <span id="app-version"></span> · נתוני מפה © OpenStreetMap contributors, CARTO, Esri</p>
     </div>
   </aside>
@@ -168,17 +181,12 @@
     </div>
   </aside>
 
-  <div id="scan-viewer" class="overlay" hidden>
-    <header class="topbar"><strong>מפת שדרות – סריקה</strong><span class="muted small">לא מעוגנת לקואורדינטות</span><button class="icon-btn" id="scan-close" type="button" aria-label="סגירה">✕</button></header>
-    <div id="scan-map"></div>
-  </div>
-
   <div id="lightbox" class="overlay lightbox" hidden><img alt="תמונה"><button class="icon-btn" type="button" aria-label="סגירה">✕</button></div>
 
   <div id="toasts" aria-live="polite"></div>
 
   <script src="/vendor/leaflet/leaflet.js"></script>
   <script src="/vendor/geoman/leaflet-geoman.min.js"></script>
-  <script type="module" src="/js/app.js?v=1"></script>
+  <script type="module" src="/js/app.js?v=2"></script>
 </body>
 </html>

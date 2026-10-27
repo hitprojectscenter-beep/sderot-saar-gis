@@ -1,17 +1,17 @@
-// Service worker: keeps the app, the map tiles of Sderot and viewed photos available without network.
-const VERSION = 'v1';
+// Service worker: keeps the app, map tiles (incl. GovMap layers) and viewed photos available without network.
+const VERSION = 'v2';
 const SHELL = `shell-${VERSION}`;
 const TILES = 'tiles-v1';
 const PHOTOS = 'photos-v1';
 const MAX_TILES = 4000;
 
 const SHELL_FILES = [
-  '/', '/index.html', '/css/app.css?v=1', '/js/app.js?v=1', '/js/layers.js', '/js/sync.js', '/js/db.js', '/js/osm.js',
+  '/', '/index.html', '/css/app.css?v=2', '/js/app.js?v=2', '/js/layers.js', '/js/sync.js', '/js/db.js', '/js/osm.js', '/js/citymap.js',
   '/vendor/leaflet/leaflet.js', '/vendor/leaflet/leaflet.css', '/vendor/geoman/leaflet-geoman.min.js', '/vendor/geoman/leaflet-geoman.css',
   '/vendor/leaflet/images/marker-icon.png', '/vendor/leaflet/images/marker-icon-2x.png', '/vendor/leaflet/images/marker-shadow.png',
-  '/img/icon-64.png', '/img/icon-192.png', '/img/icon-512.png', '/img/sderot-map.jpg', '/manifest.webmanifest',
+  '/img/icon-64.png', '/img/icon-192.png', '/img/icon-512.png', '/manifest.webmanifest',
 ];
-const TILE_HOSTS = ['basemaps.cartocdn.com', 'server.arcgisonline.com', 'tile.openstreetmap.org'];
+const TILE_HOSTS = ['basemaps.cartocdn.com', 'server.arcgisonline.com', 'tile.openstreetmap.org', 'open.govmap.gov.il'];
 
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(SHELL).then((c) => c.addAll(SHELL_FILES)).then(() => self.skipWaiting()));

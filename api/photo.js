@@ -1,5 +1,5 @@
 // POST /api/photo {data: "data:image/jpeg;base64,…"} → { id }
-// GET  /api/photo?id=…                               → the image (logged-in users only)
+// GET  /api/photo?id=…                               → the image (public)
 import { randomUUID } from 'node:crypto';
 import { requireUser } from './_lib/auth.js';
 import { readObject, writeObject } from './_lib/store.js';
@@ -9,10 +9,10 @@ const MAX_BYTES = 3 * 1024 * 1024;
 const TYPES = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp' };
 
 export default async function handler(req, res) {
-  const user = requireUser(req, res);
-  if (!user) return;
   try {
     if (req.method === 'POST') {
+      const user = requireUser(req, res);
+      if (!user) return;
       const body = typeof req.body === 'string' ? JSON.parse(req.body) : req.body || {};
       const m = /^data:(image\/(?:jpeg|png|webp));base64,(.+)$/.exec(body.data || '');
       if (!m) return res.status(400).json({ error: 'קובץ תמונה לא תקין' });
@@ -29,7 +29,7 @@ export default async function handler(req, res) {
       const obj = await readObject(`photos/${m[1]}.${m[2]}`);
       if (!obj) return res.status(404).json({ error: 'התמונה לא נמצאה' });
       res.setHeader('Content-Type', obj.contentType || 'image/jpeg');
-      res.setHeader('Cache-Control', 'private, max-age=604800, immutable');
+      res.setHeader('Cache-Control', 'public, max-age=604800, immutable');
       return res.status(200).send(obj.body);
     }
     return res.status(405).json({ error: 'method not allowed' });

@@ -223,4 +223,41 @@ details.history li { font-size: .9em; }
 .gps-dot { width: 20px; height: 20px; border-radius: 50%; background: #1e88e5; border: 3px solid #fff; box-shadow: 0 0 0 6px rgba(30,136,229,.3); }
 a.btn { text-decoration: none; color: inherit; }
 .topbar-title strong { white-space: nowrap; }
-@media (max-width: 420px) { .topbar-title span { display: none; } .topbar-logo { width: 34px; height: 34px; } }
+@media (max-width: 420px) { .topbar-title span { display: none; } .topbar-logo { width: 34px; height: 34px; } body.viewer .topbar-title { display: none; } body.viewer .topbar { justify-content: flex-end; } body.viewer .topbar-logo { margin-inline-end: auto; } }
+
+/* ── view mode vs editors ── */
+body.viewer .editor-only { display: none !important; }
+.login-chip { min-height: 40px; padding: 0 12px; border-radius: 20px; border: 2px solid var(--accent); background: var(--accent); color: var(--accent-ink); font-weight: 800; font-size: .85em; white-space: nowrap; cursor: pointer; }
+#login { background: rgba(0, 0, 0, .55); z-index: 2500; }
+.login-card { position: relative; }
+.login-close { position: absolute; top: 6px; left: 6px; }
+.btn-wide-center { width: 100%; margin-top: 8px; }
+
+/* ── city map (styled after the municipal paper map) ── */
+#map.city-bg { background: #cfe3b4; }
+.city-label { pointer-events: none; display: flex; align-items: center; justify-content: center; }
+.city-label span, .city-label em { white-space: nowrap; font-family: var(--font); }
+.city-label.street span { display: inline-block; font-size: 11.5px; font-weight: 700; color: #1d1d1d;
+  text-shadow: 0 0 2px #fff, 0 0 2px #fff, 0 0 3px #fff; }
+.city-label.hood span { font-size: 15px; font-weight: 900; color: #2b2b2b; background: rgba(255,255,255,.75); border: 1.5px solid #555;
+  border-radius: 4px; padding: 0 6px; }
+.city-label.ref span, .legend-ref { display: inline-block; min-width: 30px; text-align: center; font-size: 12px; font-weight: 900; color: #fff;
+  border-radius: 9px; border: 2px solid #fff; padding: 0 4px; box-shadow: 0 1px 2px rgba(0,0,0,.4); }
+.city-label.ref.national span, .legend-ref.national { background: #d32f2f; }
+.city-label.ref.regional span, .legend-ref.regional { background: #2e7d32; }
+.city-label.poi { flex-direction: column; }
+.city-label.poi b { font-size: 16px; line-height: 1; background: #fff; border-radius: 5px; border: 1px solid #777; padding: 1px 2px; }
+.city-label.poi em { font-style: normal; font-size: 10.5px; font-weight: 700; color: #222; text-shadow: 0 0 2px #fff, 0 0 2px #fff; margin-top: 1px; }
+body[data-theme="night"] #map.city-bg .leaflet-pane:not(.leaflet-marker-pane):not(.leaflet-popup-pane):not(.leaflet-tooltip-pane) canvas { filter: brightness(.7) contrast(1.1); }
+body[data-theme="red"] #map.city-bg canvas, body[data-theme="red"] .city-label { filter: grayscale(1) brightness(.55) sepia(1) hue-rotate(-50deg) saturate(6); }
+
+/* ── legend & GovMap ── */
+.legend-box { margin-bottom: 10px; border: 2px solid var(--line); border-radius: 12px; padding: 0 12px; }
+.legend-box summary { min-height: 48px; display: flex; align-items: center; font-weight: 800; cursor: pointer; }
+.legend-box[open] { padding-bottom: 12px; }
+.legend-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 12px; font-size: .85em; }
+.legend-grid > div { display: flex; align-items: center; gap: 8px; }
+.legend-grid i { width: 26px; height: 16px; border: 2px solid; border-radius: 3px; flex: none; }
+.legend-pois { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: 10px; font-size: .85em; }
+#govmap-list .layer-row { min-height: 44px; }
+#govmap-list small { display: block; font-weight: 400; }

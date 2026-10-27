@@ -9,8 +9,9 @@ export default async function handler(req, res) {
     user = verifyCredentials(body.username, body.password);
   } catch (e) {
     console.error(e);
-    return res.status(500).json({ error: 'המערכת לא הוגדרה (משתמשים)' });
+    return res.status(500).json({ error: 'המערכת עדיין לא הוגדרה: חסרים משתני הסביבה USERS_JSON / AUTH_SECRET ב-Vercel' });
   }
+  if (!process.env.AUTH_SECRET) return res.status(500).json({ error: 'המערכת עדיין לא הוגדרה: חסר משתנה הסביבה AUTH_SECRET ב-Vercel' });
   if (!user) {
     await new Promise((r) => setTimeout(r, 600)); // slow down guessing
     return res.status(401).json({ error: 'שם משתמש או סיסמה שגויים' });
