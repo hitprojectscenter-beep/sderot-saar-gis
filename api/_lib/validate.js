@@ -1,5 +1,5 @@
 // Input validation for features coming from the field apps.
-import { classify, isValidLayer, baseGeomType } from '../../public/js/layers.js';
+import { classify, isValidLayer, baseGeomType, EVENT_TYPES } from '../../public/js/layers.js';
 
 const ID_RE = /^[A-Za-z0-9_-]{8,64}$/;
 const MAX_VERTICES = 5000;
@@ -61,7 +61,33 @@ export function cleanFeatureInput(input) {
     layer = classify({ name, description, geometryType: geometry.type }).layerId;
     autoLayer = true;
   }
-  return { id: input.id, geometry, geomType: baseGeomType(geometry.type), name, description, photos, layer, autoLayer };
+  const eventId = ID_RE.test(input.eventId || '') ? input.eventId : null;
+  return { id: input.id, geometry, geomType: baseGeomType(geometry.type), name, description, photos, layer, autoLayer, eventId, observedAt: cleanTime(input.observedAt) };
+}
+
+/**
+ * The time something was seen in the field, as the device recorded it. A report made offline
+ * reaches the server later, so the server keeps this time for the event timeline.
+ * Accepted up to 7 days back and 5 minutes ahead (clock skew); otherwise null.
+ */
+export function cleanTime(t) {
+  const ms = Date.parse(t || '');
+  if (!Number.isFinite(ms)) return null;
+  const now = Date.now();
+  if (ms < now - 7 * 864e5 || ms > now + 5 * 60e3) return null;
+  return new Date(Math.min(ms, now)).toISOString();
+}
+
+/** An incident in the event repository. */
+export function cleanEventInput(input) {
+  if (!input || typeof input !== 'object') throw new ValidationError('אירוע חסר');
+  if (!ID_RE.test(input.id || '')) throw new ValidationError('מזהה אירוע לא תקין');
+  const action = input.action || 'open';
+  if (!['open', 'update', 'close', 'reopen'].includes(action)) throw new ValidationError('פעולת אירוע לא מוכרת');
+  const name = str(input.name, 120);
+  if (action === 'open' && !name) throw new ValidationError('יש להזין שם לאירוע');
+  const type = EVENT_TYPES.includes(input.type) ? input.type : 'אחר';
+  return { id: input.id, action, name, type, description: str(input.description, 2000), at: cleanTime(input.at) };
 }
 
 export { ID_RE };

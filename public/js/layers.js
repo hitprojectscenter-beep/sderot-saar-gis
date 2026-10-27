@@ -12,7 +12,7 @@ export const GROUPS = [
   { id: 'population', name: 'אוכלוסיות ומוסדות' },
   { id: 'unit', name: 'היחידה וקהילה בחירום' },
   { id: 'event', name: 'אירוע (זמן אמת)' },
-  { id: 'general', name: 'כללי' },
+  { id: 'general', name: 'כללי (לבעלי תפקידים בלבד)' },
 ];
 
 // geom: which geometry types the layer accepts (Point / LineString / Polygon).
@@ -167,3 +167,15 @@ export function isValidLayer(id, geometryType) {
   const layer = LAYER_BY_ID[id];
   return !!layer && layer.geom.includes(baseGeomType(geometryType));
 }
+
+/**
+ * Incident layers: the "event" group and the "general" group belong to one specific incident;
+ * every new incident starts them empty, and they are replayed with it.
+ */
+export const INCIDENT_GROUPS = ['event', 'general'];
+export const isEventLayer = (id) => INCIDENT_GROUPS.includes(LAYER_BY_ID[id]?.group);
+
+/** The "general" layers (items not yet classified) are for the unit's editors only, never for viewers. */
+export const isEditorOnlyLayer = (id) => LAYER_BY_ID[id]?.group === 'general';
+
+export const EVENT_TYPES = ['רעידת אדמה', 'פגיעת טיל / רקטה', 'קריסת מבנה', 'שריפה', 'חומרים מסוכנים', 'הצפה', 'תרגיל', 'אחר'];

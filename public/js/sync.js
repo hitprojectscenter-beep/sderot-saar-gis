@@ -1,12 +1,14 @@
 // Data layer of the app: talks to the API, keeps a local copy in IndexedDB,
 // queues every change in an outbox while offline, and replays it when the network returns.
 import { kv, outbox } from './db.js';
+import { isEditorOnlyLayer } from './layers.js';
 
 const POLL_MS = 45000;
 const listeners = { change: new Set(), status: new Set(), auth: new Set(), notice: new Set() };
 
 const state = {
   server: new Map(), // id → feature as last seen on the server
+  events: new Map(), // id → incident in the event repository
   etag: null,
   pending: [], // outbox entries
   online: navigator.onLine,
@@ -42,12 +44,17 @@ export async function login(username, password) {
   if (!res.ok) throw new Error(await errorText(res));
   const { user } = await res.json();
   await kv.set('user', user);
+  state.etag = null; // editors see more than viewers: fetch the full list again
   return user;
 }
 
 export async function logout() {
   try { await fetch('/api/logout', { method: 'POST', credentials: 'same-origin' }); } catch { /* offline: just forget locally */ }
   await kv.del('user');
+  state.etag = null;
+  state.server = new Map([...state.server].filter(([, f]) => !isEditorOnlyLayer(f.layer))); // editor-only items leave the device
+  await persistServer();
+  publish();
 }
 
 /** The cached user (works offline); verified against the server when online. */
@@ -67,6 +74,7 @@ export async function init() {
   const saved = await kv.get('features');
   if (saved) {
     state.server = new Map(saved.features.map((f) => [f.id, f]));
+    state.events = new Map((saved.events || []).map((e) => [e.id, e]));
     state.etag = saved.etag;
     state.lastSync = saved.lastSync;
   }
@@ -79,15 +87,57 @@ export async function init() {
   sync();
 }
 
-/** Server features with queued local changes applied on top. */
+/**
+ * Server features with queued local changes applied on top.
+ * Items of an incident are kept after deletion (deletedAt) for the replay; callers hide them.
+ */
 export function features() {
   const merged = new Map(state.server);
   for (const e of state.pending) {
     if (e.type !== 'op') continue;
-    if (e.op.op === 'delete') merged.delete(e.op.id);
-    else merged.set(e.op.feature.id, { ...merged.get(e.op.feature.id), ...e.op.feature, pending: true });
+    if (e.op.op === 'delete') {
+      const f = merged.get(e.op.id);
+      if (f?.eventId) merged.set(f.id, { ...f, deletedAt: e.op.at, pending: true });
+      else merged.delete(e.op.id);
+    } else if (e.op.op === 'upsert') {
+      const prev = merged.get(e.op.feature.id);
+      const local = { ...prev, ...e.op.feature, pending: true };
+      delete local.deletedAt;
+      if (local.eventId) {
+        const state0 = { layer: local.layer, name: local.name, geometry: local.geometry };
+        local.history = [...(prev?.history || []), { t: e.op.feature.observedAt, action: prev ? 'עדכון' : 'יצירה', state: state0 }];
+        local.observedAt = prev?.observedAt || e.op.feature.observedAt;
+      }
+      merged.set(local.id, local);
+    }
   }
   return [...merged.values()];
+}
+
+/** The event repository, with incidents opened or closed offline applied on top. Newest first. */
+export function events() {
+  const merged = new Map(state.events);
+  for (const e of state.pending) {
+    if (e.type !== 'op' || e.op.op !== 'event') continue;
+    const ev = e.op.event;
+    const prev = merged.get(ev.id);
+    if (ev.action === 'open') merged.set(ev.id, prev || { id: ev.id, name: ev.name, type: ev.type, description: ev.description, status: 'active', startedAt: ev.at, createdBy: ev.by, pending: true });
+    else if (prev) {
+      const next = { ...prev, pending: true };
+      if (ev.action === 'close') { next.status = 'closed'; next.endedAt = ev.at; }
+      if (ev.action === 'reopen') { next.status = 'active'; delete next.endedAt; }
+      if (ev.action === 'update') Object.assign(next, { name: ev.name || prev.name, type: ev.type, description: ev.description });
+      merged.set(ev.id, next);
+    }
+  }
+  return [...merged.values()].sort((a, b) => (b.startedAt || '').localeCompare(a.startedAt || ''));
+}
+
+/** Open / update / close / reopen an incident. Returns its id. */
+export async function saveEvent(event, action, user) {
+  const ev = { ...event, id: event.id || uuid(), action, at: new Date().toISOString(), by: { username: user.username, label: user.label } };
+  await queue({ type: 'op', op: { op: 'event', event: ev } });
+  return ev.id;
 }
 
 export function getFeature(id) { return features().find((f) => f.id === id); }
@@ -105,7 +155,7 @@ function publishStatus() {
 }
 
 async function persistServer() {
-  await kv.set('features', { features: [...state.server.values()], etag: state.etag, lastSync: state.lastSync });
+  await kv.set('features', { features: [...state.server.values()], events: [...state.events.values()], etag: state.etag, lastSync: state.lastSync });
 }
 
 /** Queue a create/update. `user` fills the optimistic local copy until the server answers. */
@@ -117,11 +167,12 @@ export async function saveFeature(feature, user) {
     updatedBy: { username: user.username, label: user.label },
     createdAt: feature.createdAt || now,
     createdBy: feature.createdBy || { username: user.username, label: user.label },
+    observedAt: now, // when it was seen in the field; the server keeps it even if this syncs hours later
   };
   await queue({ type: 'op', op: { op: 'upsert', feature: local } });
 }
 
-export async function deleteFeature(id) { await queue({ type: 'op', op: { op: 'delete', id } }); }
+export async function deleteFeature(id) { await queue({ type: 'op', op: { op: 'delete', id, at: new Date().toISOString() } }); }
 
 /** Store a photo locally (viewable offline at once) and queue its upload. Returns its id. */
 export async function addPhoto(dataUrl) {
@@ -209,8 +260,9 @@ async function pull() {
   const res = await api('/api/features', { headers: state.etag ? { 'If-None-Match': state.etag } : {} });
   if (res.status === 304) { state.lastSync = new Date().toISOString(); await persistServer(); return; }
   if (!res.ok) throw new Error(await errorText(res));
-  const { features: list } = await res.json();
+  const { features: list, events: evs = [] } = await res.json();
   state.server = new Map(list.map((f) => [f.id, f]));
+  state.events = new Map(evs.map((e) => [e.id, e]));
   state.etag = res.headers.get('ETag');
   state.lastSync = new Date().toISOString();
   await persistServer();

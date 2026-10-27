@@ -1,5 +1,5 @@
 // Sderot SA"R GIS — main app: login, map, layers, drawing, data entry, search, export.
-import { GROUPS, LAYERS, LAYER_BY_ID, classify, baseGeomType, normalizeText } from './layers.js';
+import { GROUPS, LAYERS, LAYER_BY_ID, classify, baseGeomType, normalizeText, isEventLayer, isEditorOnlyLayer, EVENT_TYPES } from './layers.js';
 import * as sync from './sync.js';
 import { SDEROT_BBOX } from './osm.js';
 import { initCityMap, loadCityData, setCityMap, resetCityMap, cityInfo, legendHtml } from './citymap.js';
@@ -112,7 +112,7 @@ $('#login-form').addEventListener('submit', async (e) => {
 /** Show editing tools only to the unit's editors; everyone else gets a read-only map. */
 function applyRole() {
   document.body.classList.toggle('viewer', !isEditor());
-  $('#actions').hidden = !isEditor() || !!drawing;
+  $('#actions').hidden = !isEditor() || !!drawing || !!replay;
   $('#btn-login').hidden = isEditor();
   $('#btn-login-top').hidden = isEditor();
   $('#btn-logout').hidden = !isEditor();
@@ -133,7 +133,7 @@ async function enterApp() {
   initMap();
   buildLayerList();
   buildLayerSelect();
-  sync.on('change', (list) => { allFeatures = list; renderFeatures(); refreshLayerCounts(); });
+  sync.on('change', (list) => { allFeatures = list; refreshEvents(); renderFeatures(); refreshLayerCounts(); });
   sync.on('status', renderStatus);
   sync.on('notice', (msg) => toast(msg, 'error'));
   sync.on('auth', async () => {
@@ -157,6 +157,8 @@ $('#btn-logout').addEventListener('click', async () => {
   closeSheet();
   user = null;
   applyRole();
+  renderFeatures();
+  refreshLayerCounts();
   toast('יצאת ממצב עריכה');
 });
 
@@ -199,7 +201,7 @@ function setBasemap(id, remember = true) {
       // No city data yet (first run, before the import): show the street tiles meanwhile.
       setCityMap(false);
       currentBase = 'city';
-      baseLayer = L.tileLayer(BASEMAPS.streets.url, { attribution: BASEMAPS.streets.attr, subdomains: 'abcd', maxZoom: 21, maxNativeZoom: 20, crossOrigin: true }).addTo(map);
+      baseLayer = L.tileLayer(BASEMAPS.streets.url, { attribution: BASEMAPS.streets.attr, subdomains: 'abcd', maxZoom: 21, maxNativeZoom: 20, crossOrigin: true, referrerPolicy: 'strict-origin-when-cross-origin' }).addTo(map);
     } else {
       map.attributionControl.addAttribution(CITY_ATTR);
     }
@@ -207,7 +209,8 @@ function setBasemap(id, remember = true) {
     setCityMap(false);
     map.attributionControl.removeAttribution(CITY_ATTR);
     const b = BASEMAPS[id];
-    baseLayer = L.tileLayer(b.url, { attribution: b.attr, subdomains: b.sub || 'abc', maxZoom: 21, maxNativeZoom: b.max, crossOrigin: true }).addTo(map);
+    // Tile servers (OSM, CARTO) refuse requests without a Referer, so send the site's origin.
+    baseLayer = L.tileLayer(b.url, { attribution: b.attr, subdomains: b.sub || 'abc', maxZoom: 21, maxNativeZoom: b.max, crossOrigin: true, referrerPolicy: 'strict-origin-when-cross-origin' }).addTo(map);
   }
   currentBase = id;
   if (remember) prefs.set('basemap', id);
@@ -240,6 +243,9 @@ function initMap() {
   setBasemap(prefs.get('basemap', 'city'));
   map.on('moveend', () => prefs.set('view', { c: [map.getCenter().lat, map.getCenter().lng], z: map.getZoom() }));
   map.on('dragstart', () => { followGps = false; $('#btn-locate').classList.remove('active'); });
+  const labelZoom = () => map.getContainer().classList.toggle('names-off', map.getZoom() < 15);
+  map.on('zoomend', labelZoom);
+  labelZoom();
 
   // Order matters: GovMap overlays, then the unit's areas, lines and points on top.
   map.createPane('govmap').style.zIndex = 300;
@@ -341,22 +347,22 @@ $('#btn-locate').addEventListener('click', () => {
 });
 
 // ───────────────────────── rendering ─────────────────────────
-function markerIcon(layer, { pending = false, base = false } = {}) {
+function markerIcon(layer, { pending = false, base = false, appear = false } = {}) {
   const size = base ? 26 : 38;
   return L.divIcon({
     className: '',
-    html: `<div class="marker-pin ${pending ? 'pending' : ''} ${base ? 'base' : ''}" style="background:${layer.color}"><span>${layer.icon}</span></div>`,
+    html: `<div class="marker-pin ${pending ? 'pending' : ''} ${base ? 'base' : ''} ${appear ? 'appear' : ''}" style="background:${layer.color}"><span>${layer.icon}</span></div>`,
     iconSize: [size, size],
     iconAnchor: [size / 2, size],
   });
 }
 
-function toLeaflet(geometry, layer, { pending = false, base = false, onClick }) {
+function toLeaflet(geometry, layer, { pending = false, base = false, appear = false, onClick }) {
   const type = baseGeomType(geometry.type);
   let lyr;
   if (type === 'Point') {
     const [lon, lat] = geometry.coordinates;
-    lyr = L.marker([lat, lon], { icon: markerIcon(layer, { pending, base }), riseOnHover: true });
+    lyr = L.marker([lat, lon], { icon: markerIcon(layer, { pending, base, appear }), riseOnHover: true });
   } else {
     const style = {
       pane: type === 'Polygon' ? 'areas' : 'lines',
@@ -372,6 +378,12 @@ function toLeaflet(geometry, layer, { pending = false, base = false, onClick }) 
   return lyr;
 }
 
+/** Every item the unit entered is labelled with its name on the map (from zoom 15, see CSS). */
+function withName(lyr, name) {
+  if (name) lyr.bindTooltip(name, { permanent: true, direction: 'bottom', offset: [0, 4], className: 'feature-label', interactive: false });
+  return lyr;
+}
+
 function renderFeatures() {
   if (!map) return;
   Object.values(groups).forEach((g) => g.clearLayers());
@@ -383,10 +395,28 @@ function renderFeatures() {
     if (f.properties.layer === 'streets' && f.properties.name) lyr.bindTooltip(f.properties.name, { sticky: true, className: 'street-label' });
     groups[layer.id].addLayer(lyr);
   }
-  for (const f of allFeatures) {
+  const list = replay ? allFeatures.filter((f) => !f.eventId && !f.deletedAt) : shownFeatures();
+  for (const f of list) {
     const layer = LAYER_BY_ID[f.layer] || LAYER_BY_ID.general_point;
     if (!f.geometry) continue;
-    groups[layer.id].addLayer(toLeaflet(f.geometry, layer, { pending: f.pending, onClick: () => showDetail(f.id) }));
+    groups[layer.id].addLayer(withName(toLeaflet(f.geometry, layer, { pending: f.pending, onClick: () => showDetail(f.id) }), f.name));
+  }
+  if (replay) {
+    // The incident as it stood at the replay time; items that just appeared pop in.
+    const now = new Set();
+    let count = 0;
+    for (const f of allFeatures) {
+      if (f.eventId !== replay.ev.id) continue;
+      const st = stateAt(f, replay.t);
+      if (!st || !st.geometry || (!isEditor() && isEditorOnlyLayer(st.layer))) continue;
+      const layer = LAYER_BY_ID[st.layer] || LAYER_BY_ID.general_point;
+      const lyr = withName(toLeaflet(st.geometry, layer, { appear: !replay.seen.has(f.id), onClick: () => showDetail(f.id) }), st.name);
+      groups[layer.id].addLayer(lyr);
+      now.add(f.id);
+      count++;
+    }
+    replay.seen = now;
+    $('#rp-count').textContent = `${count} פריטים על המפה`;
   }
   if (openDetailId) showDetail(openDetailId, true);
 }
@@ -403,7 +433,7 @@ function applyVisibility() {
 function buildLayerList() {
   $('#layer-list').innerHTML = GROUPS.map((g) => {
     const layers = LAYERS.filter((l) => l.group === g.id);
-    return `<div class="layer-group"><div class="layer-group-head"><span>${g.name}</span>
+    return `<div class="layer-group ${g.id === 'general' ? 'editor-only' : ''}"><div class="layer-group-head"><span>${g.name}</span>
       <button class="icon-btn" type="button" data-group-toggle="${g.id}" aria-label="הצג/הסתר קבוצה">◐</button></div>
       ${layers.map((l) => `<label class="layer-row"><input type="checkbox" data-layer="${l.id}" ${visible.has(l.id) ? 'checked' : ''}>
         <span class="swatch" style="border-color:${l.color}">${l.icon}</span><span class="name">${l.name}</span><span class="count" data-count="${l.id}"></span></label>`).join('')}</div>`;
@@ -427,7 +457,7 @@ $('#layers-all').addEventListener('click', () => { visible = new Set(LAYERS.map(
 $('#layers-none').addEventListener('click', () => { visible = new Set(); syncLayerChecks(); });
 $('#layers-event').addEventListener('click', () => {
   // Event mode: what a commander needs in the first hours — the live event plus rescue resources.
-  visible = new Set(LAYERS.filter((l) => ['event', 'medical', 'protection', 'unit', 'fire', 'infra', 'population'].includes(l.group) || l.id === 'sectors' || l.id === 'risk_buildings').map((l) => l.id));
+  visible = new Set(LAYERS.filter((l) => ['event', 'general', 'medical', 'protection', 'unit', 'fire', 'infra', 'population'].includes(l.group) || l.id === 'sectors' || l.id === 'risk_buildings').map((l) => l.id));
   syncLayerChecks();
   toast('מצב אירוע: שכבות האירוע, המיגון, ההצלה והתשתיות');
 });
@@ -435,10 +465,211 @@ $('#btn-layers').addEventListener('click', () => openSheet('sheet-layers'));
 
 function refreshLayerCounts() {
   const counts = {};
-  for (const f of allFeatures) counts[f.layer] = (counts[f.layer] || 0) + 1;
+  for (const f of shownFeatures()) counts[f.layer] = (counts[f.layer] || 0) + 1;
   for (const f of baseFeatures) counts[f.properties.layer] = (counts[f.properties.layer] || 0) + 1;
   $$('[data-count]').forEach((el) => { el.textContent = counts[el.dataset.count] || ''; });
 }
+
+// ───────────────────────── incidents (event repository) & replay ─────────────────────────
+// The "event" layers belong to one incident each. The map shows the selected incident only;
+// a new incident starts them empty, and any incident can be replayed from its first report to its end.
+let events = [];
+let currentEventId = prefs.get('event', null);
+let replay = null; // { ev, t0, t1, t, playing, speed, raf, last, seen }
+
+const ms = (iso) => Date.parse(iso || '') || 0;
+const currentEvent = () => events.find((e) => e.id === currentEventId) || null;
+
+/** Items shown on the map now: no deleted ones, and event layers only for the selected incident. */
+function shownFeatures() {
+  return allFeatures.filter((f) => !f.deletedAt
+    && (isEditor() || !isEditorOnlyLayer(f.layer))
+    && (!isEventLayer(f.layer) || (f.eventId && f.eventId === currentEventId)));
+}
+
+function refreshEvents() {
+  events = sync.events();
+  if (!events.some((e) => e.id === currentEventId)) {
+    currentEventId = events.find((e) => e.status === 'active')?.id || null;
+    prefs.set('event', currentEventId);
+  }
+  renderEventBar();
+  if (openSheetId === 'sheet-events') renderEventList();
+}
+
+function selectEvent(id) {
+  currentEventId = id;
+  prefs.set('event', id);
+  renderEventBar();
+  renderFeatures();
+  refreshLayerCounts();
+  const evFeatures = allFeatures.filter((f) => f.eventId === id && !f.deletedAt);
+  if (evFeatures.length) map.fitBounds(L.geoJSON({ type: 'FeatureCollection', features: evFeatures.map((f) => ({ type: 'Feature', geometry: f.geometry })) }).getBounds(), { maxZoom: 18, padding: [50, 50] });
+}
+
+function eventTimeText(ev) {
+  const start = fmt(ev.startedAt);
+  return ev.status === 'closed' ? `${start} – ${fmt(ev.endedAt)}` : `פעיל מאז ${start}`;
+}
+
+function renderEventBar() {
+  const ev = currentEvent();
+  const bar = $('#eventbar');
+  bar.hidden = !!replay;
+  bar.classList.toggle('active', ev?.status === 'active');
+  $('#ev-name').textContent = ev ? ev.name : (events.length ? 'לא נבחר אירוע' : 'מאגר אירועים');
+  $('#ev-meta').textContent = ev ? `${ev.status === 'active' ? '🔴 ' : ''}${eventTimeText(ev)}` : '';
+  $('#ev-replay').hidden = !ev;
+}
+
+function eventCounts(id) {
+  const counts = {};
+  for (const f of allFeatures) if (f.eventId === id && !f.deletedAt) counts[f.layer] = (counts[f.layer] || 0) + 1;
+  return LAYERS.filter((l) => counts[l.id]).map((l) => `${l.icon} ${counts[l.id]}`).join(' · ') || 'אין עדיין נתונים';
+}
+
+function renderEventList() {
+  const canManage = (ev) => isEditor() && (['gis', 'commander', 'deputy'].includes(user.role) || ev.createdBy?.username === user.username);
+  $('#event-list').innerHTML = events.length ? events.map((ev) => `
+    <div class="event-card ${ev.id === currentEventId ? 'selected' : ''} ${ev.status}">
+      <div class="event-head"><strong>${esc(ev.name)}</strong><span class="event-status">${ev.status === 'active' ? '🔴 פעיל' : 'הסתיים'}</span></div>
+      <div class="muted small">${esc(ev.type || '')} · ${eventTimeText(ev)}${ev.pending ? ' · ממתין לשליחה' : ''}</div>
+      ${ev.description ? `<div class="small">${esc(ev.description)}</div>` : ''}
+      <div class="small">${eventCounts(ev.id)}</div>
+      <div class="event-actions">
+        <button class="btn" data-ev-show="${ev.id}" type="button">🗺 הצג</button>
+        <button class="btn" data-ev-replay="${ev.id}" type="button">▶ הקרנה</button>
+        <button class="btn" data-ev-export="${ev.id}" type="button">📊 ייצוא</button>
+        ${canManage(ev) ? `<button class="btn" data-ev-rename="${ev.id}" type="button">✏️ שם</button>
+        ${ev.status === 'active' ? `<button class="btn btn-danger" data-ev-close="${ev.id}" type="button">⏹ סיום האירוע</button>` : `<button class="btn" data-ev-reopen="${ev.id}" type="button">↺ פתיחה מחדש</button>`}` : ''}
+      </div>
+    </div>`).join('') : '<p class="muted">עדיין אין אירועים במאגר.</p>';
+  $$('[data-ev-show]').forEach((b) => b.onclick = () => { selectEvent(b.dataset.evShow); closeSheet(); });
+  $$('[data-ev-replay]').forEach((b) => b.onclick = () => { closeSheet(); startReplay(b.dataset.evReplay); });
+  $$('[data-ev-export]').forEach((b) => b.onclick = () => exportEvent(b.dataset.evExport));
+  $$('[data-ev-close]').forEach((b) => b.onclick = async () => {
+    const ev = events.find((e) => e.id === b.dataset.evClose);
+    if (!confirm(`לסיים את האירוע „${ev.name}”? שכבות האירוע יישמרו במאגר ויהיה אפשר להקרין אותו.`)) return;
+    await sync.saveEvent(ev, 'close', user);
+    toast('האירוע הסתיים ונשמר במאגר', 'ok');
+  });
+  $$('[data-ev-reopen]').forEach((b) => b.onclick = async () => { await sync.saveEvent(events.find((e) => e.id === b.dataset.evReopen), 'reopen', user); });
+  $$('[data-ev-rename]').forEach((b) => b.onclick = async () => {
+    const ev = events.find((e) => e.id === b.dataset.evRename);
+    const name = prompt('שם האירוע', ev.name);
+    if (name && name.trim()) await sync.saveEvent({ ...ev, name: name.trim() }, 'update', user);
+  });
+}
+
+async function openEvent({ name, type, description }) {
+  const id = await sync.saveEvent({ name, type, description }, 'open', user);
+  refreshEvents();
+  selectEvent(id);
+  toast(`נפתח אירוע „${name}” – שכבות האירוע מתחילות מ-0`, 'ok');
+  return id;
+}
+
+$('#eventbar-open').addEventListener('click', () => { renderEventList(); openSheet('sheet-events'); });
+$('#ev-replay').addEventListener('click', () => { if (currentEventId) startReplay(currentEventId); });
+$('#event-type').innerHTML = EVENT_TYPES.map((t) => `<option>${t}</option>`).join('');
+$('#event-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const name = $('#event-name').value.trim() || `${$('#event-type').value} ${new Date().toLocaleString('he-IL', { dateStyle: 'short', timeStyle: 'short' })}`;
+  await openEvent({ name, type: $('#event-type').value, description: $('#event-desc').value.trim() });
+  $('#event-form').reset();
+  closeSheet();
+});
+
+/** Make sure a new item of an event layer has an incident; offers to open one on the spot. */
+async function ensureEventFor(layerId) {
+  if (!isEventLayer(layerId)) return null;
+  const ev = currentEvent();
+  if (ev && ev.status === 'active') return ev.id;
+  if (ev && confirm(`האירוע „${ev.name}” הסתיים. להוסיף אליו את הנתון בכל זאת?\n(ביטול = פתיחת אירוע חדש)`)) return ev.id;
+  const name = `אירוע ${new Date().toLocaleString('he-IL', { dateStyle: 'short', timeStyle: 'short' })}`;
+  if (!confirm(`אין אירוע פעיל. לפתוח עכשיו אירוע חדש („${name}”)?\nאפשר לשנות את שמו אחר כך במאגר האירועים.`)) return undefined;
+  return openEvent({ name, type: 'אחר', description: '' });
+}
+
+function exportEvent(id) {
+  const ev = events.find((e) => e.id === id);
+  const list = allFeatures.filter((f) => f.eventId === id).sort((a, b) => ms(a.observedAt || a.createdAt) - ms(b.observedAt || b.createdAt));
+  exportCsv(list, `event-${ev.name.replace(/[^\p{L}\p{N}]+/gu, '-')}-${stamp()}.csv`, true);
+}
+
+// ── replay ──
+/** The state of an incident item at time t (ms): { …feature, …snapshot } or null when it did not exist then. */
+function stateAt(f, t) {
+  const snaps = (f.history || []).filter((h) => 'state' in h).map((h) => ({ time: ms(h.t || h.at), state: h.state })).sort((a, b) => a.time - b.time);
+  if (!snaps.length) {
+    const born = ms(f.observedAt || f.createdAt);
+    return born <= t && !(f.deletedAt && ms(f.deletedAt) <= t) ? f : null;
+  }
+  let snap = null;
+  for (const s of snaps) if (s.time <= t) snap = s;
+  if (!snap && ms(f.observedAt || f.createdAt) <= t) snap = snaps[0]; // history was trimmed: use the oldest kept state
+  return snap && snap.state ? { ...f, ...snap.state } : null;
+}
+
+function startReplay(id) {
+  const ev = events.find((e) => e.id === id);
+  if (!ev) return;
+  if (drawing) cancelDraw();
+  const items = allFeatures.filter((f) => f.eventId === id);
+  const times = items.flatMap((f) => [ms(f.observedAt || f.createdAt), ...(f.history || []).map((h) => ms(h.t || h.at))]).filter(Boolean);
+  const t0 = Math.min(ms(ev.startedAt) || Infinity, ...times);
+  const t1 = Math.max(ms(ev.endedAt) || (ev.status === 'active' ? Date.now() : 0), ...times, t0 + 60e3);
+  currentEventId = id;
+  replay = { ev, t0, t1, t: t0, playing: false, speed: Number($('#rp-speed').value), last: 0, seen: new Set() };
+  $('#rp-title').textContent = `הקרנת אירוע: ${ev.name}`;
+  $('#actions').hidden = true;
+  $('#replaybar').hidden = false;
+  renderEventBar();
+  if (items.length) map.fitBounds(L.geoJSON({ type: 'FeatureCollection', features: items.map((f) => ({ type: 'Feature', geometry: f.geometry })) }).getBounds(), { maxZoom: 18, padding: [50, 50] });
+  // Show the incident layers during the replay.
+  LAYERS.filter((l) => l.group === 'event').forEach((l) => visible.add(l.id));
+  syncLayerChecks();
+  setReplayTime(t0);
+  playReplay(true);
+}
+
+function setReplayTime(t) {
+  replay.t = Math.max(replay.t0, Math.min(replay.t1, t));
+  $('#rp-slider').value = Math.round(((replay.t - replay.t0) / (replay.t1 - replay.t0)) * 1000);
+  const elapsed = Math.round((replay.t - replay.t0) / 60000);
+  $('#rp-time').textContent = `${new Date(replay.t).toLocaleString('he-IL', { dateStyle: 'short', timeStyle: 'medium' })} · ${elapsed >= 60 ? `${Math.floor(elapsed / 60)} ש׳ ${elapsed % 60} ד׳` : `${elapsed} ד׳`} מתחילת האירוע`;
+  renderFeatures();
+}
+
+function playReplay(on) {
+  replay.playing = on;
+  $('#rp-play').textContent = on ? '⏸' : '▶';
+  if (!on) return;
+  if (replay.t >= replay.t1) setReplayTime(replay.t0);
+  replay.last = performance.now();
+  const step = (now) => {
+    if (!replay?.playing) return;
+    setReplayTime(replay.t + (now - replay.last) * replay.speed);
+    replay.last = now;
+    if (replay.t >= replay.t1) { playReplay(false); toast('סוף האירוע'); return; }
+    requestAnimationFrame(step);
+  };
+  requestAnimationFrame(step);
+}
+
+function stopReplay() {
+  if (!replay) return;
+  replay.playing = false;
+  replay = null;
+  $('#replaybar').hidden = true;
+  applyRole();
+  renderEventBar();
+  renderFeatures();
+}
+$('#rp-play').addEventListener('click', () => playReplay(!replay.playing));
+$('#rp-slider').addEventListener('input', (e) => { playReplay(false); setReplayTime(replay.t0 + (e.target.value / 1000) * (replay.t1 - replay.t0)); });
+$('#rp-speed').addEventListener('change', (e) => { if (replay) replay.speed = Number(e.target.value); });
+$('#rp-close').addEventListener('click', stopReplay);
 
 // ───────────────────────── drawing ─────────────────────────
 let drawing = null; // { shape } while drawing a new item, { featureId, layer } while editing a shape
@@ -587,9 +818,16 @@ $('#feature-form').addEventListener('submit', async (e) => {
   if (!name) { $('#f-name').focus(); return; }
   const f = { ...form.feature, name, description: $('#f-desc').value.trim(), photos: form.photos, layer: $('#f-layer').value };
   delete f.pending;
+  if (isEventLayer(f.layer)) {
+    if (!f.eventId) {
+      const eventId = await ensureEventFor(f.layer);
+      if (!eventId) return; // no incident: keep the form open
+      f.eventId = eventId;
+    }
+  } else delete f.eventId;
   await sync.saveFeature(f, user);
   const l = LAYER_BY_ID[f.layer];
-  toast(`נשמר בשכבת „${l.name}”${navigator.onLine ? '' : ' – יישלח כשתחזור הרשת'}`, 'ok');
+  toast(`נשמר בשכבת „${l.name}”${f.eventId ? ` (אירוע: ${events.find((e) => e.id === f.eventId)?.name || ''})` : ''}${navigator.onLine ? '' : ' – יישלח כשתחזור הרשת'}`, 'ok');
   if (navigator.vibrate) navigator.vibrate(60);
   if (!visible.has(f.layer)) { visible.add(f.layer); syncLayerChecks(); }
   form = null;
@@ -647,6 +885,8 @@ async function showDetail(id, refresh = false) {
     ${f.description ? `<div class="detail-desc">${esc(f.description)}</div>` : ''}
     <div class="thumbs" id="d-photos"></div>
     <table class="meta-table">
+      ${f.eventId ? `<tr><th>אירוע</th><td>${esc(eventName(f.eventId))}</td></tr>` : ''}
+      ${f.observedAt && f.observedAt !== f.createdAt ? `<tr><th>זמן תצפית בשטח</th><td>${fmt(f.observedAt)}</td></tr>` : ''}
       <tr><th>נוצר ע״י</th><td>${esc(f.createdBy?.label)} · ${esc(f.createdBy?.username)}<br><span class="muted">${fmt(f.createdAt)}</span></td></tr>
       <tr><th>עודכן לאחרונה ע״י</th><td>${esc(f.updatedBy?.label)} · ${esc(f.updatedBy?.username)}<br><span class="muted">${fmt(f.updatedAt)}</span></td></tr>
       <tr><th>מיקום</th><td dir="ltr" style="text-align:right">${lat.toFixed(6)}, ${lon.toFixed(6)}</td></tr>
@@ -761,7 +1001,7 @@ $('#search-input').addEventListener('input', () => {
   const words = q.split(' ');
   const match = (text) => { const t = normalizeText(text); return words.every((w) => t.includes(w)); };
   const hits = [
-    ...allFeatures.filter((f) => match(`${f.name} ${f.description} ${LAYER_BY_ID[f.layer]?.name}`)).map((f) => ({ kind: 'f', f, name: f.name, layer: f.layer })),
+    ...shownFeatures().filter((f) => match(`${f.name} ${f.description} ${LAYER_BY_ID[f.layer]?.name}`)).map((f) => ({ kind: 'f', f, name: f.name, layer: f.layer })),
     ...baseFeatures.filter((f) => match(`${f.properties.name} ${LAYER_BY_ID[f.properties.layer]?.name}`)).map((f) => ({ kind: 'b', f, name: f.properties.name, layer: f.properties.layer })),
   ].slice(0, 60);
   out.innerHTML = hits.length ? hits.map((h, i) => `<li><button type="button" data-hit="${i}"><span>${LAYER_BY_ID[h.layer]?.icon || '📍'}</span><span>${esc(h.name)}<small>${LAYER_BY_ID[h.layer]?.name || ''}${h.kind === 'b' ? ' · שכבת בסיס' : ''}</small></span></button></li>`).join('') : '<li class="muted">לא נמצאו תוצאות</li>';
@@ -786,24 +1026,29 @@ function download(name, content, type) {
 }
 const stamp = () => new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-');
 
+const eventName = (id) => events.find((e) => e.id === id)?.name || '';
+
 $('#btn-export-geojson').addEventListener('click', () => {
-  const fc = { type: 'FeatureCollection', features: allFeatures.map((f) => ({ type: 'Feature', id: f.id, geometry: f.geometry, properties: {
+  const fc = { type: 'FeatureCollection', features: shownFeatures().map((f) => ({ type: 'Feature', id: f.id, geometry: f.geometry, properties: {
     layer: f.layer, layer_name: LAYER_BY_ID[f.layer]?.name, name: f.name, description: f.description, photos: f.photos?.length || 0,
+    event: f.eventId ? eventName(f.eventId) : null, observed_at: f.observedAt || f.createdAt,
     created_by: f.createdBy?.username, created_at: f.createdAt, updated_by: f.updatedBy?.username, updated_at: f.updatedAt } })) };
   download(`saar-sderot-${stamp()}.geojson`, JSON.stringify(fc, null, 1), 'application/geo+json');
 });
 
-$('#btn-export-xlsx').addEventListener('click', () => {
-  const cols = ['מזהה', 'שכבה', 'שם', 'תיאור', 'סוג', 'קו רוחב', 'קו אורך', 'תמונות', 'נוצר ע״י', 'נוצר בתאריך', 'עודכן ע״י', 'עודכן בתאריך'];
+/** CSV that opens in Excel (UTF-8 with BOM). `withStatus` adds the deletion columns for an incident log. */
+function exportCsv(list, filename, withStatus = false) {
+  const cols = ['מזהה', 'אירוע', 'שכבה', 'שם', 'תיאור', 'סוג', 'קו רוחב', 'קו אורך', 'תמונות', 'זמן תצפית', 'נוצר ע״י', 'נוצר בתאריך', 'עודכן ע״י', 'עודכן בתאריך', ...(withStatus ? ['סטטוס', 'נמחק בתאריך'] : [])];
   const cell = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
-  const rows = allFeatures.map((f) => {
+  const rows = list.map((f) => {
     const [lat, lon] = centroid(f.geometry);
-    return [f.id, LAYER_BY_ID[f.layer]?.name, f.name, f.description, { Point: 'נקודה', LineString: 'קו', Polygon: 'שטח' }[baseGeomType(f.geometry.type)],
-      lat.toFixed(6), lon.toFixed(6), f.photos?.length || 0, f.createdBy?.label, fmt(f.createdAt), f.updatedBy?.label, fmt(f.updatedAt)].map(cell).join(',');
+    return [f.id, f.eventId ? eventName(f.eventId) : '', LAYER_BY_ID[f.layer]?.name, f.name, f.description, { Point: 'נקודה', LineString: 'קו', Polygon: 'שטח' }[baseGeomType(f.geometry.type)],
+      lat.toFixed(6), lon.toFixed(6), f.photos?.length || 0, fmt(f.observedAt || f.createdAt), f.createdBy?.label, fmt(f.createdAt), f.updatedBy?.label, fmt(f.updatedAt),
+      ...(withStatus ? [f.deletedAt ? 'נמחק' : 'פעיל', fmt(f.deletedAt)] : [])].map(cell).join(',');
   });
-  // BOM so Excel opens Hebrew correctly.
-  download(`saar-sderot-${stamp()}.csv`, `﻿${cols.map(cell).join(',')}\r\n${rows.join('\r\n')}`, 'text/csv;charset=utf-8');
-});
+  download(filename, `\uFEFF${cols.map(cell).join(',')}\r\n${rows.join('\r\n')}`, 'text/csv;charset=utf-8');
+}
+$('#btn-export-xlsx').addEventListener('click', () => exportCsv(shownFeatures(), `saar-sderot-${stamp()}.csv`));
 
 // Offline map: fetch the tiles covering Sderot so the service worker stores them.
 function tilesFor([s, w, n, e], z) {
