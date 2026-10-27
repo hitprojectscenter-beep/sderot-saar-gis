@@ -186,11 +186,18 @@ $('#btn-sync-now').addEventListener('click', () => { sync.sync(); toast('מסנ�
 // "city" is drawn in the browser from OpenStreetMap data, in the style of the municipal paper map.
 const BASEMAPS = {
   city: { name: 'מפת העיר' },
-  streets: { name: 'רחובות', url: 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', attr: '© OpenStreetMap contributors © CARTO', sub: 'abcd', max: 20 },
+  // Free sources that need no API key (CARTO now requires one).
+  streets: { name: 'רחובות', url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}', attr: 'Esri, HERE, Garmin, © OpenStreetMap contributors', max: 19 },
   satellite: { name: 'תצלום אוויר', url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', attr: 'Esri, Maxar, Earthstar Geographics', max: 19 },
   osm: { name: 'OSM', url: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png', attr: '© OpenStreetMap contributors', max: 19 },
-  dark: { name: 'כהה', url: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', attr: '© OpenStreetMap contributors © CARTO', sub: 'abcd', max: 20 },
+  dark: { name: 'כהה', url: 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}',
+    labels: 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}', attr: 'Esri, HERE, Garmin, © OpenStreetMap contributors', max: 16 },
 };
+const TILE_OPTS = { maxZoom: 21, crossOrigin: true, referrerPolicy: 'strict-origin-when-cross-origin' }; // OSM refuses requests without a Referer
+function tileLayerFor(b) {
+  const base = L.tileLayer(b.url, { ...TILE_OPTS, attribution: b.attr, maxNativeZoom: b.max });
+  return b.labels ? L.layerGroup([base, L.tileLayer(b.labels, { ...TILE_OPTS, maxNativeZoom: b.max })]) : base;
+}
 let baseLayer;
 let currentBase = null;
 function setBasemap(id, remember = true) {
@@ -198,19 +205,17 @@ function setBasemap(id, remember = true) {
   if (baseLayer) { map.removeLayer(baseLayer); baseLayer = null; }
   if (id === 'city') {
     if (!setCityMap(true)) {
-      // No city data yet (first run, before the import): show the street tiles meanwhile.
+      // No city data yet (first run, before the import): show the OSM map meanwhile.
       setCityMap(false);
       currentBase = 'city';
-      baseLayer = L.tileLayer(BASEMAPS.streets.url, { attribution: BASEMAPS.streets.attr, subdomains: 'abcd', maxZoom: 21, maxNativeZoom: 20, crossOrigin: true, referrerPolicy: 'strict-origin-when-cross-origin' }).addTo(map);
+      baseLayer = tileLayerFor(BASEMAPS.osm).addTo(map);
     } else {
       map.attributionControl.addAttribution(CITY_ATTR);
     }
   } else {
     setCityMap(false);
     map.attributionControl.removeAttribution(CITY_ATTR);
-    const b = BASEMAPS[id];
-    // Tile servers (OSM, CARTO) refuse requests without a Referer, so send the site's origin.
-    baseLayer = L.tileLayer(b.url, { attribution: b.attr, subdomains: b.sub || 'abc', maxZoom: 21, maxNativeZoom: b.max, crossOrigin: true, referrerPolicy: 'strict-origin-when-cross-origin' }).addTo(map);
+    baseLayer = tileLayerFor(BASEMAPS[id]).addTo(map);
   }
   currentBase = id;
   if (remember) prefs.set('basemap', id);
@@ -1060,11 +1065,14 @@ function tilesFor([s, w, n, e], z) {
 }
 $('#btn-offline-tiles').addEventListener('click', async () => {
   if (!navigator.onLine) { toast('נדרש חיבור לרשת להורדה', 'error'); return; }
-  // The city map itself is already stored on the device; save the street tiles as well, for zooming beyond it.
-  const id = BASEMAPS[prefs.get('basemap', 'city')]?.url ? prefs.get('basemap') : 'streets';
+  // The city map itself is already stored on the device; save the street or photo tiles as well.
+  // (OSM's tile servers forbid bulk downloads, so the OSM choice saves the Esri street map instead.)
+  const id = ['streets', 'satellite', 'dark'].includes(prefs.get('basemap')) ? prefs.get('basemap') : 'streets';
   const b = BASEMAPS[id];
-  const tiles = [13, 14, 15, 16, 17].flatMap((z) => tilesFor(SDEROT_BBOX, z));
-  const urls = tiles.map((t) => b.url.replace('{s}', 'abcd'[(t.x + t.y) % 4]).replace('{z}', t.z).replace('{x}', t.x).replace('{y}', t.y).replace('{r}', ''));
+  const tiles = [13, 14, 15, 16, 17].filter((z) => z <= b.max).flatMap((z) => tilesFor(SDEROT_BBOX, z));
+  const fill = (url, t) => url.replace('{z}', t.z).replace('{x}', t.x).replace('{y}', t.y);
+  const urls = tiles.flatMap((t) => [fill(b.url, t), ...(b.labels ? [fill(b.labels, t)] : [])]);
+  const total = urls.length;
   let done = 0; let failed = 0;
   const progress = $('#offline-progress');
   const worker = async () => {
@@ -1072,10 +1080,10 @@ $('#btn-offline-tiles').addEventListener('click', async () => {
       const u = urls.shift();
       try { await fetch(u, { mode: 'cors' }); } catch { failed++; }
       done++;
-      if (done % 10 === 0) progress.textContent = `הורדו ${done} מתוך ${tiles.length} אריחים (${b.name})…`;
+      if (done % 10 === 0) progress.textContent = `הורדו ${done} מתוך ${total} אריחים (${b.name})…`;
     }
   };
-  progress.textContent = `מוריד ${tiles.length} אריחים…`;
+  progress.textContent = `מוריד ${total} אריחים…`;
   await Promise.all(Array.from({ length: 6 }, worker));
   progress.textContent = `מפת „${b.name}” של שדרות נשמרה במכשיר (${done - failed} אריחים, זום 13–17).`;
   toast('המפה נשמרה לשימוש ללא רשת', 'ok');

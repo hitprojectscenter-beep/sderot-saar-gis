@@ -1,17 +1,17 @@
 // Service worker: keeps the app, map tiles (incl. GovMap layers) and viewed photos available without network.
-const VERSION = 'v3';
+const VERSION = 'v4';
 const SHELL = `shell-${VERSION}`;
-const TILES = 'tiles-v1';
+const TILES = 'tiles-v2'; // v2: drop CARTO tiles cached with the "API key required" image
 const PHOTOS = 'photos-v1';
 const MAX_TILES = 4000;
 
 const SHELL_FILES = [
-  '/', '/index.html', '/css/app.css?v=3', '/js/app.js?v=3', '/js/layers.js', '/js/sync.js', '/js/db.js', '/js/osm.js', '/js/citymap.js',
+  '/', '/index.html', '/css/app.css?v=4', '/js/app.js?v=4', '/js/layers.js', '/js/sync.js', '/js/db.js', '/js/osm.js', '/js/citymap.js',
   '/vendor/leaflet/leaflet.js', '/vendor/leaflet/leaflet.css', '/vendor/geoman/leaflet-geoman.min.js', '/vendor/geoman/leaflet-geoman.css',
   '/vendor/leaflet/images/marker-icon.png', '/vendor/leaflet/images/marker-icon-2x.png', '/vendor/leaflet/images/marker-shadow.png',
   '/img/icon-64.png', '/img/icon-192.png', '/img/icon-512.png', '/manifest.webmanifest',
 ];
-const TILE_HOSTS = ['basemaps.cartocdn.com', 'server.arcgisonline.com', 'tile.openstreetmap.org', 'open.govmap.gov.il'];
+const TILE_HOSTS = ['server.arcgisonline.com', 'tile.openstreetmap.org', 'open.govmap.gov.il'];
 
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(SHELL).then((c) => c.addAll(SHELL_FILES)).then(() => self.skipWaiting()));
