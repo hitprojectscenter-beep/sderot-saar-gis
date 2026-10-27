@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#b71c1c">
+  <meta name="description" content="מפה מבצעית ליחידת סע״ר שדרות – קליטה והנגשה של נתונים בשגרה ובחירום">
+  <title>מפת סע״ר שדרות</title>
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" href="/img/icon-64.png">
+  <link rel="apple-touch-icon" href="/img/icon-180.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <link rel="stylesheet" href="/vendor/leaflet/leaflet.css">
+  <link rel="stylesheet" href="/vendor/geoman/leaflet-geoman.css">
+  <link rel="stylesheet" href="/css/app.css?v=1">
+</head>
+<body data-theme="day" data-size="normal">
+
+  <!-- ───────── Login ───────── -->
+  <section id="login" class="screen" hidden>
+    <form id="login-form" class="login-card" autocomplete="on">
+      <img src="/img/icon-192.png" alt="סמל יחידת סע״ר שדרות" class="login-logo" width="120" height="120">
+      <h1>מפת סע״ר שדרות</h1>
+      <p class="muted">מערכת GIS לקליטה והנגשה של נתונים בשגרה ובחירום</p>
+      <label>שם משתמש
+        <input id="login-user" name="username" autocomplete="username" autocapitalize="off" autocorrect="off" spellcheck="false" required dir="ltr">
+      </label>
+      <label>סיסמה
+        <input id="login-pass" name="password" type="password" autocomplete="current-password" required dir="ltr">
+      </label>
+      <button class="btn btn-primary btn-xl" type="submit">כניסה</button>
+      <p id="login-error" class="error" role="alert"></p>
+      <p id="login-offline" class="muted small" hidden>אין חיבור לרשת. כניסה ראשונה דורשת רשת; לאחר מכן המערכת עובדת גם בלעדיה.</p>
+    </form>
+  </section>
+
+  <!-- ───────── App ───────── -->
+  <section id="app" class="screen" hidden>
+    <header class="topbar">
+      <img src="/img/icon-64.png" alt="" class="topbar-logo" width="40" height="40">
+      <div class="topbar-title">
+        <strong>סע״ר שדרות</strong>
+        <span id="user-label" class="muted small"></span>
+      </div>
+      <button id="status" class="status-chip" type="button" title="מצב סנכרון">…</button>
+      <button id="btn-search" class="icon-btn" type="button" aria-label="חיפוש">🔍</button>
+      <button id="btn-menu" class="icon-btn" type="button" aria-label="תפריט">☰</button>
+    </header>
+
+    <div id="map" aria-label="מפת שדרות"></div>
+
+    <div class="map-fabs">
+      <button id="btn-layers" class="fab" type="button" aria-label="שכבות">🗂<span>שכבות</span></button>
+      <button id="btn-locate" class="fab" type="button" aria-label="המיקום שלי">◎<span>מיקומי</span></button>
+    </div>
+
+    <nav id="actions" class="actionbar" aria-label="הוספת נתון">
+      <button class="act" data-draw="Marker" type="button"><b>📍</b>נקודה</button>
+      <button class="act" data-draw="Line" type="button"><b>〰️</b>קו</button>
+      <button class="act" data-draw="Polygon" type="button"><b>⬛</b>שטח</button>
+      <button class="act act-strong" id="btn-here" type="button"><b>🎯</b>נקודה במיקומי</button>
+    </nav>
+
+    <nav id="drawbar" class="actionbar drawbar" hidden aria-label="שרטוט">
+      <div id="draw-hint" class="draw-hint"></div>
+      <button class="act" id="draw-undo" type="button"><b>↶</b>בטל נקודה</button>
+      <button class="act act-strong" id="draw-finish" type="button"><b>✓</b>סיום</button>
+      <button class="act act-danger" id="draw-cancel" type="button"><b>✕</b>ביטול</button>
+    </nav>
+  </section>
+
+  <!-- ───────── Sheets ───────── -->
+  <div id="scrim" class="scrim" hidden></div>
+
+  <aside id="sheet-layers" class="sheet" hidden aria-label="שכבות">
+    <header class="sheet-head"><h2>שכבות</h2><button class="icon-btn" data-close type="button" aria-label="סגירה">✕</button></header>
+    <div class="sheet-body">
+      <div class="basemaps" id="basemaps" role="radiogroup" aria-label="מפת רקע"></div>
+      <div class="row gap">
+        <button class="btn" id="layers-all" type="button">הצג הכול</button>
+        <button class="btn" id="layers-none" type="button">הסתר הכול</button>
+        <button class="btn" id="layers-event" type="button">מצב אירוע</button>
+      </div>
+      <div id="layer-list"></div>
+    </div>
+  </aside>
+
+  <aside id="sheet-form" class="sheet sheet-tall" hidden aria-label="פרטי נתון">
+    <header class="sheet-head"><h2 id="form-title">נתון חדש</h2><button class="icon-btn" data-close type="button" aria-label="סגירה">✕</button></header>
+    <form id="feature-form" class="sheet-body">
+      <label>שם הנתון <span class="req">*</span>
+        <input id="f-name" required maxlength="120" placeholder="למשל: מקלט ציבורי 12, ברז כיבוי, בניין פגוע">
+      </label>
+      <label>תיאור
+        <div class="with-mic">
+          <textarea id="f-desc" rows="3" maxlength="3000" placeholder="מה רואים, מצב, הערות"></textarea>
+          <button id="f-mic" class="icon-btn mic" type="button" aria-label="הכתבה קולית" hidden>🎤</button>
+        </div>
+      </label>
+      <div class="field">
+        <span class="field-label">תמונות</span>
+        <div id="f-photos" class="thumbs"></div>
+        <label class="btn btn-wide photo-btn">📷 צילום / הוספת תמונה
+          <input id="f-photo-input" type="file" accept="image/*" capture="environment" multiple hidden>
+        </label>
+      </div>
+      <div class="field">
+        <span class="field-label">שכבה</span>
+        <div id="f-layer-hint" class="layer-hint"></div>
+        <select id="f-layer" aria-label="שכבה"></select>
+      </div>
+      <p id="f-meta" class="muted small"></p>
+      <div class="form-actions">
+        <button class="btn btn-primary btn-xl" type="submit">💾 שמירה</button>
+        <button class="btn btn-xl" type="button" data-close>ביטול</button>
+      </div>
+    </form>
+  </aside>
+
+  <aside id="sheet-detail" class="sheet" hidden aria-label="פרטים">
+    <header class="sheet-head"><h2 id="d-title"></h2><button class="icon-btn" data-close type="button" aria-label="סגירה">✕</button></header>
+    <div class="sheet-body" id="d-body"></div>
+  </aside>
+
+  <aside id="sheet-menu" class="sheet" hidden aria-label="תפריט">
+    <header class="sheet-head"><h2>תפריט</h2><button class="icon-btn" data-close type="button" aria-label="סגירה">✕</button></header>
+    <div class="sheet-body">
+      <div id="menu-user" class="card"></div>
+      <h3>תצוגה לתנאי שטח</h3>
+      <div class="row gap wrap" role="radiogroup" aria-label="ערכת צבעים">
+        <button class="btn" data-theme-set="day" type="button">☀️ יום</button>
+        <button class="btn" data-theme-set="night" type="button">🌙 לילה</button>
+        <button class="btn" data-theme-set="red" type="button">🔴 ראיית לילה</button>
+      </div>
+      <div class="row gap wrap" role="radiogroup" aria-label="גודל טקסט">
+        <button class="btn" data-size-set="normal" type="button">א רגיל</button>
+        <button class="btn" data-size-set="large" type="button">א גדול</button>
+        <button class="btn" data-size-set="xlarge" type="button">א ענק</button>
+      </div>
+      <h3>עבודה ללא רשת</h3>
+      <button class="btn btn-wide" id="btn-offline-tiles" type="button">⬇️ שמירת מפת שדרות במכשיר</button>
+      <p id="offline-progress" class="muted small"></p>
+      <button class="btn btn-wide" id="btn-sync-now" type="button">🔄 סנכרון עכשיו</button>
+      <h3>מפות ונתונים</h3>
+      <button class="btn btn-wide" id="btn-scan" type="button">🗺 המפה הסרוקה של העיר</button>
+      <button class="btn btn-wide" id="btn-export-xlsx" type="button">📊 ייצוא לאקסל (CSV)</button>
+      <button class="btn btn-wide" id="btn-export-geojson" type="button">🌐 ייצוא GeoJSON</button>
+      <div id="gis-tools" hidden>
+        <h3>כלי אחראי GIS</h3>
+        <button class="btn btn-wide" id="btn-osm-import" type="button">🛰 ייבוא שכבות בסיס מ-OpenStreetMap</button>
+        <label class="btn btn-wide">📥 ייבוא GeoJSON כשכבת בסיס
+          <input id="base-file" type="file" accept=".geojson,.json,application/geo+json,application/json" hidden>
+        </label>
+        <p id="osm-status" class="muted small"></p>
+      </div>
+      <h3>חשבון</h3>
+      <button class="btn btn-wide btn-danger" id="btn-logout" type="button">יציאה מהמערכת</button>
+      <p class="muted small">גרסה <span id="app-version"></span> · נתוני מפה © OpenStreetMap contributors, CARTO, Esri</p>
+    </div>
+  </aside>
+
+  <aside id="sheet-search" class="sheet" hidden aria-label="חיפוש">
+    <header class="sheet-head"><h2>חיפוש</h2><button class="icon-btn" data-close type="button" aria-label="סגירה">✕</button></header>
+    <div class="sheet-body">
+      <input id="search-input" type="search" placeholder="שם, רחוב, שכונה, שכבה…" autocomplete="off">
+      <ul id="search-results" class="results"></ul>
+    </div>
+  </aside>
+
+  <div id="scan-viewer" class="overlay" hidden>
+    <header class="topbar"><strong>מפת שדרות – סריקה</strong><span class="muted small">לא מעוגנת לקואורדינטות</span><button class="icon-btn" id="scan-close" type="button" aria-label="סגירה">✕</button></header>
+    <div id="scan-map"></div>
+  </div>
+
+  <div id="lightbox" class="overlay lightbox" hidden><img alt="תמונה"><button class="icon-btn" type="button" aria-label="סגירה">✕</button></div>
+
+  <div id="toasts" aria-live="polite"></div>
+
+  <script src="/vendor/leaflet/leaflet.js"></script>
+  <script src="/vendor/geoman/leaflet-geoman.min.js"></script>
+  <script type="module" src="/js/app.js?v=1"></script>
+</body>
+</html>

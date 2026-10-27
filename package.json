@@ -1,0 +1,21 @@
+{
+  "name": "sderot-saar-gis",
+  "version": "0.1.0",
+  "private": true,
+  "description": "מערכת GIS ליחידת סע\"ר שדרות",
+  "type": "module",
+  "scripts": {
+    "dev": "node scripts/dev-server.mjs",
+    "hash-users": "node scripts/hash-users.mjs",
+    "vendor": "node scripts/copy-vendor.mjs",
+    "test": "node --test tests/*.test.mjs"
+  },
+  "engines": { "node": ">=20" },
+  "dependencies": {
+    "@vercel/blob": "^2.8.2"
+  },
+  "devDependencies": {
+    "@geoman-io/leaflet-geoman-free": "^2.20.4",
+    "leaflet": "^1.9.4"
+  }
+}
