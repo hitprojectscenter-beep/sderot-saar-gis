@@ -112,7 +112,7 @@ label > input, label > select, label > textarea, label > .with-mic { margin-top:
 .status-chip.error { border-color: var(--danger); color: var(--danger); }
 #map { flex: 1; min-height: 0; background: var(--surface-2); }
 
-.map-fabs { position: absolute; left: 10px; bottom: calc(var(--touch) + 40px + env(safe-area-inset-bottom)); display: flex; flex-direction: column; gap: 10px; z-index: 900; }
+.map-fabs { display: flex; flex-direction: column; gap: 10px; margin: 0 0 14px 10px !important; }
 .fab {
   width: calc(var(--touch) + 8px); height: calc(var(--touch) + 8px); border-radius: 50%; border: 2px solid var(--line); background: var(--surface);
   box-shadow: var(--shadow); font-size: 1.4em; display: flex; flex-direction: column; align-items: center; justify-content: center; cursor: pointer; line-height: 1;
@@ -288,3 +288,64 @@ body[data-theme="red"] #map.city-bg canvas, body[data-theme="red"] .city-label {
 .leaflet-tooltip.feature-label::before { display: none; }
 #map.names-off .leaflet-tooltip.feature-label { display: none; }
 body[data-theme="red"] .leaflet-tooltip.feature-label { background: #000; color: #ff3b3b; border-color: #ff3b3b; }
+
+/* notice shown while the city map has not been loaded yet */
+.city-missing { position: absolute; top: calc(104px + env(safe-area-inset-top)); left: 50%; transform: translateX(-50%); z-index: 1050;
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 8px; max-width: min(92vw, 560px);
+  background: var(--surface); border: 2px solid var(--warn); border-radius: 14px; padding: 8px 12px; box-shadow: var(--shadow); font-weight: 700; text-align: center; }
+.city-missing .btn { min-height: 44px; }
+body:not(.viewer) .viewer-only { display: none; }
+
+/* ───────── responsive layout: phone · landscape phone · tablet · laptop · large screen ───────── */
+
+/* Tablets (600–899 px): panels open as a centered card instead of spanning the whole width. */
+@media (min-width: 600px) and (max-width: 899px) {
+  .sheet { left: 0; right: 0; margin: 0 auto; width: min(580px, 96vw); }
+  .city-missing { max-width: 560px; }
+}
+
+/* Laptops and large screens: a compact toolbar centered under the map, panels on the side. */
+@media (min-width: 900px) {
+  .actionbar { grid-template-columns: repeat(4, minmax(0, 170px)); justify-content: center; }
+  .drawbar { grid-template-columns: repeat(3, minmax(0, 190px)); }
+  .replaybar > * { width: min(760px, 100%); margin: 0 auto; }
+  .act { flex-direction: row; gap: 8px; font-size: .95em; min-height: 52px; }
+  .act b { font-size: 1.3em; }
+  .eventbar #ev-name { max-width: 40vw; }
+}
+@media (min-width: 1600px) {
+  :root { --fs: 18px; }
+  .sheet { width: 480px; }
+}
+
+/* Phones held sideways and other short screens: give the map the height. */
+@media (max-height: 520px) and (orientation: landscape) {
+  :root { --touch: 44px; }
+  body[data-size="large"] { --touch: 50px; }
+  body[data-size="xlarge"] { --touch: 56px; }
+  .topbar { padding-top: 2px; padding-bottom: 2px; }
+  .topbar-logo { width: 30px; height: 30px; }
+  .status-chip, .login-chip { min-height: 34px; }
+  .actionbar { grid-template-columns: repeat(4, minmax(0, 160px)); justify-content: center; padding: 4px; }
+  .drawbar { grid-template-columns: repeat(3, minmax(0, 170px)); }
+  .draw-hint { font-size: .85em; padding: 0; }
+  .act { flex-direction: row; gap: 6px; min-height: 42px; font-size: .85em; }
+  .act b { font-size: 1.2em; }
+  .fab { width: 48px; height: 48px; font-size: 1.1em; }
+  .map-fabs { gap: 6px; margin-bottom: 8px !important; }
+  .eventbar { top: calc(42px + env(safe-area-inset-left)); }
+  .eventbar button { min-height: 34px; }
+  .city-missing { top: 84px; padding: 4px 10px; }
+  .sheet { inset: 4px 0 0 0; margin: 0 auto; width: min(620px, 100vw); max-height: calc(100vh - 4px); border-radius: 16px 16px 0 0; }
+  .replaybar { gap: 2px; padding: 4px 8px; }
+  .replay-controls .act, .replay-controls select { min-height: 42px; }
+  #login { align-items: start; }
+  .login-logo { width: 64px; height: 64px; }
+}
+
+/* Very small phones (≤ 360 px wide). */
+@media (max-width: 360px) {
+  .act { font-size: .78em; }
+  .status-chip { padding: 0 8px; }
+  .basemaps { grid-template-columns: repeat(3, 1fr); }
+}

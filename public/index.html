@@ -13,7 +13,7 @@
   <meta name="mobile-web-app-capable" content="yes">
   <link rel="stylesheet" href="/vendor/leaflet/leaflet.css">
   <link rel="stylesheet" href="/vendor/geoman/leaflet-geoman.css">
-  <link rel="stylesheet" href="/css/app.css?v=4">
+  <link rel="stylesheet" href="/css/app.css?v=6">
 </head>
 <body data-theme="day" data-size="normal" class="viewer">
 
@@ -52,6 +52,12 @@
     </header>
 
     <div id="map" aria-label="מפת שדרות"></div>
+
+    <div id="city-missing" class="city-missing" hidden>
+      <span id="city-missing-text">מפת העיר טרם נטענה – מוצגת בינתיים מפת OSM.</span>
+      <button id="city-missing-load" class="btn btn-primary editor-only" type="button">🛰 טעינת מפת העיר</button>
+      <span class="viewer-only muted small">בעל תפקיד צריך להיכנס למערכת כדי לטעון אותה.</span>
+    </div>
 
     <div id="eventbar" class="eventbar">
       <button id="eventbar-open" type="button"><b id="ev-name">מאגר אירועים</b><span id="ev-meta" class="small"></span></button>
@@ -225,6 +231,6 @@
 
   <script src="/vendor/leaflet/leaflet.js"></script>
   <script src="/vendor/geoman/leaflet-geoman.min.js"></script>
-  <script type="module" src="/js/app.js?v=4"></script>
+  <script type="module" src="/js/app.js?v=5"></script>
 </body>
 </html>

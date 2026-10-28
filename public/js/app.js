@@ -102,6 +102,7 @@ $('#login-form').addEventListener('submit', async (e) => {
     applyRole();
     toast(`שלום ${user.label} – ניתן להזין ולעדכן נתונים`, 'ok');
     sync.sync();
+    if (!cityInfo()) initCity();
   } catch (err) {
     $('#login-error').textContent = navigator.onLine ? err.message : 'אין חיבור לרשת';
   } finally {
@@ -203,26 +204,30 @@ let currentBase = null;
 function setBasemap(id, remember = true) {
   if (!BASEMAPS[id]) id = 'city';
   if (baseLayer) { map.removeLayer(baseLayer); baseLayer = null; }
+  let cityShown = false;
   if (id === 'city') {
-    if (!setCityMap(true)) {
-      // No city data yet (first run, before the import): show the OSM map meanwhile.
+    cityShown = setCityMap(true);
+    if (!cityShown) {
+      // No city data yet (before the first import): show the OSM map meanwhile, and say so on the map.
       setCityMap(false);
-      currentBase = 'city';
       baseLayer = tileLayerFor(BASEMAPS.osm).addTo(map);
-    } else {
-      map.attributionControl.addAttribution(CITY_ATTR);
     }
   } else {
     setCityMap(false);
-    map.attributionControl.removeAttribution(CITY_ATTR);
     baseLayer = tileLayerFor(BASEMAPS[id]).addTo(map);
   }
+  if (cityShown !== cityAttrOn) {
+    map.attributionControl[cityShown ? 'addAttribution' : 'removeAttribution'](CITY_ATTR);
+    cityAttrOn = cityShown;
+  }
+  $('#city-missing').hidden = id !== 'city' || cityShown;
   currentBase = id;
   if (remember) prefs.set('basemap', id);
   $$('#basemaps .btn').forEach((btn) => btn.setAttribute('aria-pressed', btn.dataset.base === id));
   $('#legend-wrap').hidden = id !== 'city';
 }
 const CITY_ATTR = 'מפת העיר: © OpenStreetMap contributors';
+let cityAttrOn = false;
 
 async function initCity() {
   const ok = await loadCityData();
@@ -233,13 +238,19 @@ async function initCity() {
     $('#city-info').textContent = info ? `מפת העיר עודכנה ${fmt(info.importedAt)} · ${info.stats.buildings} מבנים, ${info.stats.roads} קטעי דרך` : '';
   } else {
     $('#city-info').textContent = 'מפת העיר טרם נטענה מ-OpenStreetMap.';
-    if (isEditor()) toast('מפת העיר טרם נטענה – אפשר לטעון אותה מהתפריט („טעינת מפת העיר”)', 'error');
+    // The first editor who logs in loads it, so nobody has to remember the menu.
+    if (isEditor() && navigator.onLine) runCityImport({ ask: false });
   }
 }
+$('#city-missing-load').addEventListener('click', () => runCityImport({ ask: false }));
 
 function initMap() {
   map = L.map('map', { zoomControl: false, attributionControl: true, tap: true, maxZoom: 20 }).setView(prefs.get('view', { c: SDEROT_CENTER, z: 15 }).c, prefs.get('view', { z: 15 }).z);
   L.control.zoom({ position: 'topleft' }).addTo(map);
+  // The "layers" and "my location" buttons live in Leaflet's own control layer (bottom left),
+  // so map panes and other controls can never cover them, whatever the window size.
+  const Fabs = L.Control.extend({ onAdd() { const el = $('.map-fabs'); L.DomEvent.disableClickPropagation(el); L.DomEvent.disableScrollPropagation(el); return el; } });
+  new Fabs({ position: 'bottomleft' }).addTo(map);
   L.control.scale({ imperial: false, position: 'bottomright' }).addTo(map);
   initCityMap(map);
   $('#basemaps').innerHTML = Object.entries(BASEMAPS).map(([id, b]) => `<button class="btn" type="button" data-base="${id}" role="radio">${b.name}</button>`).join('');
@@ -1090,12 +1101,17 @@ $('#btn-offline-tiles').addEventListener('click', async () => {
 });
 
 // GIS officer: import base layers.
-$('#btn-osm-import').addEventListener('click', async () => {
-  if (!confirm('לטעון מ-OpenStreetMap את מפת העיר (מבנים, רחובות, שימושי קרקע, מוסדות) ואת שכבות הבסיס (ברזי כיבוי, דפיברילטורים, מקלטים, שכונות)? הטעינה מחליפה את הגרסה הקודמת ונמשכת עד דקה.')) return;
+let importing = false;
+async function runCityImport({ ask = true } = {}) {
+  if (importing) return;
+  if (ask && !confirm('לטעון מ-OpenStreetMap את מפת העיר (מבנים, רחובות, שימושי קרקע, מוסדות) ואת שכבות הבסיס (ברזי כיבוי, דפיברילטורים, מקלטים, שכונות)? הטעינה מחליפה את הגרסה הקודמת ונמשכת עד דקה.')) return;
+  importing = true;
   const status = $('#osm-status');
   const btn = $('#btn-osm-import');
   btn.disabled = true;
+  $('#city-missing-text').textContent = 'טוען את מפת העיר מ-OpenStreetMap… (עד דקה)';
   status.textContent = 'השרת מוריד את הנתונים מ-OpenStreetMap… (עד דקה)';
+  toast('טוען את מפת העיר מ-OpenStreetMap… (עד דקה)');
   try {
     const res = await fetch('/api/city', { method: 'POST', credentials: 'same-origin' });
     const r = await res.json().catch(() => ({}));
@@ -1107,12 +1123,15 @@ $('#btn-osm-import').addEventListener('click', async () => {
     setBasemap('city');
     toast('מפת העיר נטענה', 'ok');
   } catch (e) {
-    status.textContent = e.message;
-    toast(e.message, 'error');
+    status.textContent = `טעינת מפת העיר נכשלה: ${e.message}`;
+    $('#city-missing-text').textContent = `טעינת מפת העיר נכשלה: ${e.message}`;
+    toast(`טעינת מפת העיר נכשלה: ${e.message}`, 'error');
   } finally {
     btn.disabled = false;
+    importing = false;
   }
-});
+}
+$('#btn-osm-import').addEventListener('click', () => runCityImport({ ask: true }));
 $('#base-file').addEventListener('change', async (e) => {
   const file = e.target.files[0];
   e.target.value = '';
