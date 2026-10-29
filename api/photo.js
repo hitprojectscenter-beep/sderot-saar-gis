@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { requireUser } from './_lib/auth.js';
 import { readObject, writeObject } from './_lib/store.js';
 import { ID_RE } from './_lib/validate.js';
+import { readJson } from './_lib/body.js';
 
 const MAX_BYTES = 3 * 1024 * 1024;
 const TYPES = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp' };
@@ -13,7 +14,8 @@ export default async function handler(req, res) {
     if (req.method === 'POST') {
       const user = requireUser(req, res);
       if (!user) return;
-      const body = typeof req.body === 'string' ? JSON.parse(req.body) : req.body || {};
+      const body = readJson(req);
+      if (!body) return res.status(400).json({ error: 'בקשה לא תקינה' });
       const m = /^data:(image\/(?:jpeg|png|webp));base64,(.+)$/.exec(body.data || '');
       if (!m) return res.status(400).json({ error: 'קובץ תמונה לא תקין' });
       const buf = Buffer.from(m[2], 'base64');

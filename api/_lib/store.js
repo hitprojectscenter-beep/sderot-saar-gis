@@ -6,7 +6,7 @@
 // and every write is a compare-and-swap (ifMatch), so two commanders saving at the same
 // moment never overwrite each other.
 import { createHash } from 'node:crypto';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile, rename } from 'node:fs/promises';
 import path from 'node:path';
 
 const useBlob = !!process.env.BLOB_READ_WRITE_TOKEN;
@@ -76,7 +76,10 @@ export async function writeObject(pathname, body, { contentType = 'application/j
       const currentTag = current ? current.etag : null;
       if (currentTag !== ifMatch) throw new ConflictError('etag mismatch');
     }
-    await writeFile(file, body);
+    // Write a temp file and rename it, so a concurrent read never sees a half-written file.
+    const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
+    await writeFile(tmp, body);
+    await rename(tmp, file);
     return { etag: etagOf(Buffer.isBuffer(body) ? body : Buffer.from(body)) };
   });
   fsQueue = run.catch(() => {});

@@ -1,12 +1,12 @@
 // Service worker: keeps the app, map tiles (incl. GovMap layers) and viewed photos available without network.
-const VERSION = 'v7';
+const VERSION = 'v8';
 const SHELL = `shell-${VERSION}`;
 const TILES = 'tiles-v2'; // v2: drop CARTO tiles cached with the "API key required" image
 const PHOTOS = 'photos-v1';
 const MAX_TILES = 4000;
 
 const SHELL_FILES = [
-  '/', '/index.html', '/css/app.css?v=7', '/js/app.js?v=7', '/js/layers.js', '/js/sync.js', '/js/db.js', '/js/osm.js', '/js/citymap.js',
+  '/', '/index.html', '/css/app.css?v=8', '/js/app.js?v=8', '/js/layers.js', '/js/sync.js', '/js/db.js', '/js/osm.js', '/js/citymap.js',
   '/vendor/leaflet/leaflet.js', '/vendor/leaflet/leaflet.css', '/vendor/geoman/leaflet-geoman.min.js', '/vendor/geoman/leaflet-geoman.css',
   '/vendor/leaflet/images/marker-icon.png', '/vendor/leaflet/images/marker-icon-2x.png', '/vendor/leaflet/images/marker-shadow.png',
   '/img/icon-64.png', '/img/icon-192.png', '/img/icon-512.png', '/manifest.webmanifest',

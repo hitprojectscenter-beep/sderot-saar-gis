@@ -11,6 +11,7 @@ import { requireUser, canDelete, currentUser } from './_lib/auth.js';
 import { readObject, updateFeatures, FEATURES_PATH } from './_lib/store.js';
 import { cleanFeatureInput, cleanEventInput, ValidationError, ID_RE } from './_lib/validate.js';
 import { isEventLayer, isEditorOnlyLayer } from '../public/js/layers.js';
+import { readJson } from './_lib/body.js';
 
 const MAX_OPS = 200;
 const HISTORY_LIMIT = 30;
@@ -54,7 +55,8 @@ async function list(req, res) {
 }
 
 async function apply(req, res, user) {
-  const body = typeof req.body === 'string' ? JSON.parse(req.body) : req.body || {};
+  const body = readJson(req);
+  if (!body) throw new ValidationError('גוף הבקשה אינו JSON תקין');
   const ops = Array.isArray(body.ops) ? body.ops : [];
   if (!ops.length) throw new ValidationError('אין פעולות לביצוע');
   if (ops.length > MAX_OPS) throw new ValidationError('יותר מדי פעולות בבקשה אחת');

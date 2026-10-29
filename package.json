@@ -19,5 +19,8 @@
   "devDependencies": {
     "@geoman-io/leaflet-geoman-free": "^2.20.4",
     "leaflet": "^1.9.4"
+  },
+  "overrides": {
+    "zod": "^4.6.7"
   }
 }

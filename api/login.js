@@ -1,9 +1,11 @@
 // POST /api/login {username, password} → sets the session cookie
 import { verifyCredentials, signSession, sessionCookie } from './_lib/auth.js';
+import { readJson } from './_lib/body.js';
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'method not allowed' });
-  const body = typeof req.body === 'string' ? JSON.parse(req.body || '{}') : req.body || {};
+  const body = readJson(req);
+  if (!body) return res.status(400).json({ error: 'בקשה לא תקינה' });
   let user;
   try {
     user = verifyCredentials(body.username, body.password);

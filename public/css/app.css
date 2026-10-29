@@ -350,3 +350,7 @@ body:not(.viewer) .viewer-only { display: none; }
   .act { font-size: .78em; }
   .status-chip { padding: 0 8px; }
 }
+
+/* while drawing, existing items do not catch taps (the new point lands where you tap) */
+#map.drawing .leaflet-areas-pane *, #map.drawing .leaflet-lines-pane *, #map.drawing .feature-marker,
+#map.drawing .leaflet-areas-pane, #map.drawing .leaflet-lines-pane { pointer-events: none !important; }

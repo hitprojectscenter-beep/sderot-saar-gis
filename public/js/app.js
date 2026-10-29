@@ -283,6 +283,7 @@ function initMap() {
   map.pm.setLang('he', {
     tooltips: {
       placeMarker: 'הקישו למיקום הנקודה',
+      placeMarkerTouch: 'הקישו על המפה במיקום הנקודה',
       firstVertex: 'הקישו לנקודה הראשונה',
       continueLine: 'הקישו להמשך',
       finishLine: 'הקישו על הנקודה האחרונה או „סיום”',
@@ -375,7 +376,7 @@ $('#btn-locate').addEventListener('click', () => {
 function markerIcon(layer, { pending = false, base = false, appear = false } = {}) {
   const size = base ? 26 : 38;
   return L.divIcon({
-    className: '',
+    className: 'feature-marker',
     html: `<div class="marker-pin ${pending ? 'pending' : ''} ${base ? 'base' : ''} ${appear ? 'appear' : ''}" style="background:${layer.color}"><span>${layer.icon}</span></div>`,
     iconSize: [size, size],
     iconAnchor: [size / 2, size],
@@ -405,7 +406,8 @@ function toLeaflet(geometry, layer, { pending = false, base = false, appear = fa
 
 /** Every item the unit entered is labelled with its name on the map (from zoom 15, see CSS). */
 function withName(lyr, name) {
-  if (name) lyr.bindTooltip(name, { permanent: true, direction: 'bottom', offset: [0, 4], className: 'feature-label', interactive: false });
+  // Leaflet treats a string tooltip as HTML, so pass a text node: a name can never run as code.
+  if (name) lyr.bindTooltip(document.createTextNode(name), { permanent: true, direction: 'bottom', offset: [0, 4], className: 'feature-label', interactive: false });
   return lyr;
 }
 
@@ -704,6 +706,8 @@ const DRAW_HINTS = {
   Polygon: 'הקישו את פינות השטח, ואז „סיום”',
 };
 function setDrawMode(on, hint = '') {
+  // While drawing, taps go through existing items to the map (instead of opening their details).
+  map.getContainer().classList.toggle('drawing', on);
   $('#actions').hidden = on;
   $('#drawbar').hidden = !on;
   $('#draw-hint').textContent = hint;

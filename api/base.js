@@ -2,6 +2,7 @@
 // PUT /api/base → replace them (GIS officer only)
 import { requireUser } from './_lib/auth.js';
 import { readObject, writeObject, BASE_PATH } from './_lib/store.js';
+import { readJson } from './_lib/body.js';
 
 export default async function handler(req, res) {
   try {
@@ -18,7 +19,7 @@ export default async function handler(req, res) {
       const user = requireUser(req, res);
       if (!user) return;
       if (user.role !== 'gis') return res.status(403).json({ error: 'רק אחראי GIS יכול לעדכן שכבות בסיס' });
-      const body = typeof req.body === 'string' ? JSON.parse(req.body) : req.body;
+      const body = readJson(req);
       if (body?.type !== 'FeatureCollection' || !Array.isArray(body.features)) {
         return res.status(400).json({ error: 'נדרש GeoJSON FeatureCollection' });
       }
