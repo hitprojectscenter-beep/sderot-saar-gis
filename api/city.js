@@ -38,7 +38,7 @@ async function importCity(req, res) {
   const existing = await readObject(MANIFEST);
   if (existing && user.role !== 'gis') return res.status(403).json({ error: 'רק אחראי GIS יכול לעדכן את מפת העיר' });
 
-  const { json, source } = await fetchOverpass();
+  const { json, source } = await fetchOverpass(240000); // the function may run 300 s (vercel.json); keep time to save and answer
   const { parts, base, stats } = buildCityMap(json);
 
   const manifest = { importedAt: new Date().toISOString(), importedBy: user.username, source: `OpenStreetMap (${source})`, stats, parts: {} };

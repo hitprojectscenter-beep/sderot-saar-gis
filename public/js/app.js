@@ -1117,7 +1117,7 @@ $('#btn-offline-tiles').addEventListener('click', async () => {
 let importing = false;
 async function runCityImport({ ask = true } = {}) {
   if (importing) return;
-  if (ask && !confirm('לטעון מ-OpenStreetMap את מפת העיר (מבנים, רחובות, שימושי קרקע, מוסדות) ואת שכבות הבסיס (ברזי כיבוי, דפיברילטורים, מקלטים, שכונות)? הטעינה מחליפה את הגרסה הקודמת ונמשכת עד דקה.')) return;
+  if (ask && !confirm('לטעון מ-OpenStreetMap את מפת העיר (מבנים, רחובות, שימושי קרקע, מוסדות) ואת שכבות הבסיס (ברזי כיבוי, דפיברילטורים, מקלטים, שכונות)? הטעינה מחליפה את הגרסה הקודמת ונמשכת בדרך כלל עד דקה (כשהשרתים עמוסים – עד 4 דקות).')) return;
   importing = true;
   const status = $('#osm-status');
   const btn = $('#btn-osm-import');

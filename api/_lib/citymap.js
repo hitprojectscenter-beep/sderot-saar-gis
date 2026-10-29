@@ -40,25 +40,36 @@ function query([s, w, n, e]) {
 out geom qt;`;
 }
 
-export async function fetchOverpass() {
+/**
+ * Download the city from the first Overpass mirror that answers.
+ * `budgetMs` is the time left for downloading: each mirror gets a share of it, and the
+ * function gives up in time to answer the user with a clear message (instead of the
+ * function being killed by the platform's time limit).
+ */
+export async function fetchOverpass(budgetMs = 240000) {
   const body = `data=${encodeURIComponent(query(CITY_BBOX))}`;
-  let lastError;
+  const deadline = Date.now() + budgetMs;
+  const errors = [];
   for (const url of ENDPOINTS) {
+    const left = deadline - Date.now();
+    if (left < 15000) break;
+    const host = new URL(url).host;
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), Math.min(left, 120000));
     try {
-      const ctrl = new AbortController();
-      const timer = setTimeout(() => ctrl.abort(), 50000);
       const res = await fetch(url, {
         method: 'POST', body, signal: ctrl.signal,
         headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'User-Agent': 'sderot-saar-gis/0.2 (emergency volunteers map)' },
       });
-      clearTimeout(timer);
-      if (!res.ok) throw new Error(`${new URL(url).host}: HTTP ${res.status}`);
-      return { json: await res.json(), source: new URL(url).host };
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return { json: await res.json(), source: host };
     } catch (e) {
-      lastError = e;
+      errors.push(`${host}: ${e.name === 'AbortError' ? 'לא ענה בזמן' : e.message}`);
+    } finally {
+      clearTimeout(timer);
     }
   }
-  throw new Error(`הורדה מ-OpenStreetMap נכשלה (${lastError?.message || 'שגיאה'})`);
+  throw new Error(`שרתי OpenStreetMap עמוסים כרגע – נסו שוב בעוד כמה דקות (${errors.join('; ') || 'אין מענה'})`);
 }
 
 // ───────── geometry helpers ─────────
