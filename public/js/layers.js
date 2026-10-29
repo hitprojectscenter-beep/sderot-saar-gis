@@ -24,7 +24,7 @@ export const LAYERS = [
     keywords: ['שכונה', 'שכונת', 'נאות', 'רובע', 'neighborhood'] },
   { id: 'sectors', group: 'city', name: 'גזרות סע״ר', icon: '🗺', color: '#e67e22', geom: ['Polygon'],
     keywords: ['גזרה', 'גזרת', 'סקטור', 'צוות 1', 'צוות 2', 'צוות 3', 'צוות 4'] },
-  { id: 'streets', group: 'city', name: 'רחובות', icon: '🛣', color: '#7f8c8d', geom: ['LineString'],
+  { id: 'streets', group: 'city', name: 'שמות רחובות', icon: '🛣', color: '#7f8c8d', geom: ['LineString'],
     keywords: ['רחוב', 'רח', 'סמטה', 'כביש', 'דרך', 'שדרת', 'street', 'road'] },
   { id: 'risk_buildings', group: 'city', name: 'מבנים בסיכון', icon: '⚠', color: '#c0392b', geom: ['Polygon', 'Point'],
     keywords: ['קומת עמודים', 'מבנה מסוכן', 'מבנה ישן', 'תקן 413', 'סכנת קריסה', 'מסוכן', 'סדוק', 'תמא'] },

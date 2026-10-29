@@ -49,6 +49,8 @@ let labelLayer;
 let streetCandidates = [];
 let refCandidates = [];
 let active = false;
+let streetNamesOn = false; // the "שמות רחובות" layer: names only, over any background
+let fallbackStreets = []; // street lines from the base layers, used when the city map is not loaded
 
 // ───────── loading (cached for offline use) ─────────
 async function fetchJson(url) {
@@ -101,8 +103,23 @@ export function initCityMap(leafletMap) {
     map.createPane(pane).style.zIndex = z;
   }
   map.getPane('cityLabels').style.pointerEvents = 'none';
+  labelLayer = L.layerGroup().addTo(map); // labels live outside the city map, so street names work on any background
   map.on('zoomend', () => { if (active) restyleRoads(); });
-  map.on('moveend', () => { if (active) drawLabels(); });
+  map.on('moveend', drawLabels);
+}
+
+/** Show street names (without the street lines) on top of whatever background is shown. */
+export function setStreetNames(on) {
+  streetNamesOn = on;
+  prepareLabels();
+  drawLabels();
+}
+
+/** Street lines from the base layers, for street names before the city map has been loaded. */
+export function setStreetSource(features) {
+  fallbackStreets = features || [];
+  prepareLabels();
+  drawLabels();
 }
 
 function build() {
@@ -146,7 +163,6 @@ function build() {
     L.polyline(ll, { renderer: roadRenderer, color: '#fff', weight: 3, dashArray: '12,12', interactive: false }).addTo(group);
   }
 
-  labelLayer = L.layerGroup().addTo(group);
   prepareLabels();
   restyleRoads();
 }
@@ -190,10 +206,19 @@ function samples(coords, step) {
 function prepareLabels() {
   streetCandidates = [];
   refCandidates = [];
-  for (const f of data.parts.roads?.features || []) {
-    const { n, r, c } = f.properties;
-    if (n && c !== 'path') for (const s of samples(f.geometry.coordinates, 160)) streetCandidates.push({ ...s, text: n, major: ['major', 'primary', 'secondary'].includes(c) });
-    if (r) for (const s of samples(f.geometry.coordinates, 900)) refCandidates.push({ ...s, text: r.split(';')[0] });
+  if (data) {
+    for (const f of data.parts.roads?.features || []) {
+      const { n, r, c } = f.properties;
+      if (n && c !== 'path') for (const s of samples(f.geometry.coordinates, 160)) streetCandidates.push({ ...s, text: n, major: ['major', 'primary', 'secondary'].includes(c) });
+      if (r) for (const s of samples(f.geometry.coordinates, 900)) refCandidates.push({ ...s, text: r.split(';')[0] });
+    }
+  } else {
+    for (const f of fallbackStreets) {
+      const name = f.properties?.name;
+      if (!name || !f.geometry) continue;
+      const lines = f.geometry.type === 'MultiLineString' ? f.geometry.coordinates : f.geometry.type === 'LineString' ? [f.geometry.coordinates] : [];
+      for (const line of lines) for (const s of samples(line, 160)) streetCandidates.push({ ...s, text: name, major: false });
+    }
   }
 }
 
@@ -202,6 +227,7 @@ const escHtml = (s) => String(s).replace(/[&<>"]/g, (ch) => ({ '&': '&amp;', '<'
 function drawLabels() {
   if (!labelLayer) return;
   labelLayer.clearLayers();
+  if (!active && !streetNamesOn) return;
   const z = map.getZoom();
   const bounds = map.getBounds().pad(0.1);
   const taken = new Set(); // occupied screen cells, to keep labels from piling up
@@ -218,7 +244,7 @@ function drawLabels() {
     icon: L.divIcon({ className: `city-label ${cls}`, html, iconSize: size, iconAnchor: [size[0] / 2, size[1] / 2] }) }));
 
   // Neighborhood names (big), like "נאות השקמה" on the paper map.
-  if (z >= 13 && z <= 17) {
+  if (active && z >= 13 && z <= 17) {
     for (const f of data.parts.labels?.features || []) {
       if (f.properties.k === 'city' || f.properties.k === 'town') continue;
       const ll = L.latLng(f.geometry.coordinates[1], f.geometry.coordinates[0]);
@@ -229,7 +255,7 @@ function drawLabels() {
     }
   }
   // Road numbers: red for national roads, green for regional ones.
-  if (z >= 12) {
+  if (active && z >= 12) {
     const seen = new Set();
     for (const c of refCandidates) {
       if (!bounds.contains(c.ll)) continue;
@@ -240,7 +266,7 @@ function drawLabels() {
     }
   }
   // Street names written along the street.
-  if (z >= 16) {
+  if (streetNamesOn && z >= 16) {
     const seen = new Set();
     const cell = z >= 18 ? 220 : 300;
     for (const c of streetCandidates) {
@@ -261,7 +287,7 @@ function drawLabels() {
     }
   }
   // Symbols of public places (from zoom 16), with their names from zoom 17.
-  if (z >= 16) {
+  if (active && z >= 16) {
     for (const f of data.parts.pois?.features || []) {
       const ll = L.latLng(f.geometry.coordinates[1], f.geometry.coordinates[0]);
       if (!bounds.contains(ll)) continue;
@@ -282,8 +308,9 @@ export function setCityMap(on) {
     group.addTo(map);
     restyleRoads();
     drawLabels();
-  } else if (group) {
-    map.removeLayer(group);
+  } else {
+    if (group) map.removeLayer(group);
+    drawLabels(); // street names may stay on
   }
   return true;
 }
@@ -293,7 +320,7 @@ export function resetCityMap() {
   if (group && map) map.removeLayer(group);
   group = null;
   roadLayers = {};
-  labelLayer = null;
+  prepareLabels();
 }
 
 export function legendHtml() {

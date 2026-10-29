@@ -153,8 +153,10 @@ label > input, label > select, label > textarea, label > .with-mic { margin-top:
 .form-actions { display: flex; gap: 10px; margin-top: 8px; position: sticky; bottom: -20px; background: var(--surface); padding: 8px 0 12px; }
 
 /* layers list */
-.basemaps { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-bottom: 12px; }
-.basemaps .btn { padding: 0 4px; font-size: .85em; }
+.basemaps { display: grid; gap: 8px; margin-bottom: 12px; }
+.basemap-group > span { display: block; font-weight: 800; color: var(--muted); font-size: .85em; margin-bottom: 4px; }
+.basemap-group > div { display: grid; grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap: 6px; }
+.basemaps .btn { padding: 0 6px; font-size: .85em; }
 .layer-group { margin-top: 14px; }
 .layer-group-head { display: flex; align-items: center; justify-content: space-between; font-weight: 800; color: var(--muted); border-bottom: 1px solid var(--line); padding-bottom: 4px; }
 .layer-row { display: flex; align-items: center; gap: 10px; min-height: var(--touch); padding: 2px 4px; border-radius: 10px; cursor: pointer; font-weight: 600; margin: 0; }
@@ -347,5 +349,4 @@ body:not(.viewer) .viewer-only { display: none; }
 @media (max-width: 360px) {
   .act { font-size: .78em; }
   .status-chip { padding: 0 8px; }
-  .basemaps { grid-template-columns: repeat(3, 1fr); }
 }

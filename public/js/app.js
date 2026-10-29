@@ -2,7 +2,7 @@
 import { GROUPS, LAYERS, LAYER_BY_ID, classify, baseGeomType, normalizeText, isEventLayer, isEditorOnlyLayer, EVENT_TYPES } from './layers.js';
 import * as sync from './sync.js';
 import { SDEROT_BBOX } from './osm.js';
-import { initCityMap, loadCityData, setCityMap, resetCityMap, cityInfo, legendHtml } from './citymap.js';
+import { initCityMap, loadCityData, setCityMap, resetCityMap, cityInfo, legendHtml, setStreetNames, setStreetSource } from './citymap.js';
 
 export const APP_VERSION = '0.1.0';
 const SDEROT_CENTER = [31.5245, 34.5965];
@@ -19,7 +19,9 @@ let map;
 let groups = {}; // layerId → L.FeatureGroup
 let allFeatures = [];
 let baseFeatures = [];
-let visible = new Set(prefs.get('visible', LAYERS.map((l) => l.id).filter((id) => id !== 'streets')));
+let visible = new Set(prefs.get('visible', LAYERS.map((l) => l.id)));
+// v6: the "streets" layer became street names only, shown by default.
+if (!prefs.get('streetNamesV6', false)) { visible.add('streets'); prefs.set('streetNamesV6', true); }
 let lastPosition = null;
 
 // ───────────────────────── toasts ─────────────────────────
@@ -145,7 +147,7 @@ async function enterApp() {
     toast('פג תוקף ההתחברות – יש להתחבר מחדש כדי לשלוח את הנתונים', 'error');
   });
   await sync.init();
-  baseFeatures = (await sync.loadBase()).features || [];
+  await loadBaseFeatures();
   renderFeatures();
   refreshLayerCounts();
   initCity();
@@ -186,12 +188,12 @@ $('#btn-sync-now').addEventListener('click', () => { sync.sync(); toast('מסנ�
 // ───────────────────────── map ─────────────────────────
 // "city" is drawn in the browser from OpenStreetMap data, in the style of the municipal paper map.
 const BASEMAPS = {
-  city: { name: 'מפת העיר' },
+  city: { name: 'מפת העיר', kind: 'map' },
   // Free sources that need no API key (CARTO now requires one).
-  streets: { name: 'רחובות', url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}', attr: 'Esri, HERE, Garmin, © OpenStreetMap contributors', max: 19 },
-  satellite: { name: 'תצלום אוויר', url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', attr: 'Esri, Maxar, Earthstar Geographics', max: 19 },
-  osm: { name: 'OSM', url: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png', attr: '© OpenStreetMap contributors', max: 19 },
-  dark: { name: 'כהה', url: 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}',
+  streets: { name: 'מפת רחובות', kind: 'map', url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}', attr: 'Esri, HERE, Garmin, © OpenStreetMap contributors', max: 19 },
+  satellite: { name: 'תצלום אוויר Esri', kind: 'photo', url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', attr: 'Esri, Maxar, Earthstar Geographics', max: 19 },
+  osm: { name: 'OSM', kind: 'map', url: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png', attr: '© OpenStreetMap contributors', max: 19 },
+  dark: { name: 'כהה (לילה)', kind: 'map', url: 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}',
     labels: 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}', attr: 'Esri, HERE, Garmin, © OpenStreetMap contributors', max: 16 },
 };
 const TILE_OPTS = { maxZoom: 21, crossOrigin: true, referrerPolicy: 'strict-origin-when-cross-origin' }; // OSM refuses requests without a Referer
@@ -229,6 +231,11 @@ function setBasemap(id, remember = true) {
 const CITY_ATTR = 'מפת העיר: © OpenStreetMap contributors';
 let cityAttrOn = false;
 
+async function loadBaseFeatures() {
+  baseFeatures = (await sync.loadBase()).features || [];
+  setStreetSource(baseFeatures.filter((f) => f.properties?.layer === 'streets'));
+}
+
 async function initCity() {
   const ok = await loadCityData();
   if (ok) {
@@ -253,7 +260,9 @@ function initMap() {
   new Fabs({ position: 'bottomleft' }).addTo(map);
   L.control.scale({ imperial: false, position: 'bottomright' }).addTo(map);
   initCityMap(map);
-  $('#basemaps').innerHTML = Object.entries(BASEMAPS).map(([id, b]) => `<button class="btn" type="button" data-base="${id}" role="radio">${b.name}</button>`).join('');
+  const baseButtons = (kind) => Object.entries(BASEMAPS).filter(([, b]) => b.kind === kind).map(([id, b]) => `<button class="btn" type="button" data-base="${id}" role="radio">${b.name}</button>`).join('');
+  $('#basemaps').innerHTML = `<div class="basemap-group"><span>מפות</span><div>${baseButtons('map')}</div></div>
+    <div class="basemap-group"><span>תצלומי אוויר</span><div>${baseButtons('photo')}</div></div>`;
   $$('#basemaps .btn').forEach((btn) => btn.addEventListener('click', () => setBasemap(btn.dataset.base)));
   $('#legend').innerHTML = legendHtml();
   setBasemap(prefs.get('basemap', 'city'));
@@ -407,9 +416,8 @@ function renderFeatures() {
     const layer = LAYER_BY_ID[f.properties.layer];
     if (!layer || !f.geometry) continue;
     if (layer.id === 'neighborhoods' && f.geometry.type === 'Point') continue; // the city map already writes neighborhood names
-    const lyr = toLeaflet(f.geometry, layer, { base: true, onClick: () => showBaseDetail(f) });
-    if (f.properties.layer === 'streets' && f.properties.name) lyr.bindTooltip(f.properties.name, { sticky: true, className: 'street-label' });
-    groups[layer.id].addLayer(lyr);
+    if (layer.id === 'streets') continue; // street names only (written along the streets), no lines
+    groups[layer.id].addLayer(toLeaflet(f.geometry, layer, { base: true, onClick: () => showBaseDetail(f) }));
   }
   const list = replay ? allFeatures.filter((f) => !f.eventId && !f.deletedAt) : shownFeatures();
   for (const f of list) {
@@ -438,6 +446,7 @@ function renderFeatures() {
 }
 
 function applyVisibility() {
+  setStreetNames(visible.has('streets'));
   for (const l of LAYERS) {
     if (visible.has(l.id)) groups[l.id].addTo(map);
     else map.removeLayer(groups[l.id]);
@@ -1117,7 +1126,7 @@ async function runCityImport({ ask = true } = {}) {
     const r = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(r.error || `שגיאה ${res.status}`);
     status.textContent = `נטענו ${r.stats.buildings} מבנים, ${r.stats.roads} קטעי דרך, ${r.stats.landuse} שטחים, ${r.stats.pois} מוסדות ו-${r.base} פריטי בסיס.`;
-    baseFeatures = (await sync.loadBase()).features || [];
+    await loadBaseFeatures();
     renderFeatures(); refreshLayerCounts();
     await initCity();
     setBasemap('city');
@@ -1149,7 +1158,7 @@ $('#base-file').addEventListener('change', async (e) => {
     const existing = await sync.loadBase();
     const merged = { type: 'FeatureCollection', features: [...(existing.features || []), ...fc.features], source: `${existing.source || ''} + ${file.name}` };
     const r = await sync.saveBase(merged);
-    baseFeatures = (await sync.loadBase()).features || [];
+    await loadBaseFeatures();
     renderFeatures(); refreshLayerCounts();
     toast(`נוספו ${fc.features.length} פריטים לשכבות הבסיס (סה״כ ${r.count})`, 'ok');
   } catch (err) {
